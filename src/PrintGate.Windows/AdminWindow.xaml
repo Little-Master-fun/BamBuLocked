@@ -1,0 +1,56 @@
+<Window x:Class="PrintGate.Windows.AdminWindow" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+ Title="PrintGate · 管理员使用记录" Width="1320" Height="880" MinWidth="1080" MinHeight="700" WindowStartupLocation="CenterScreen" Background="White" FontFamily="Microsoft YaHei UI" Foreground="#2E3E44">
+ <Window.Resources>
+  <Style TargetType="Button"><Setter Property="Cursor" Value="Hand"/><Setter Property="Padding" Value="16,9"/><Setter Property="Background" Value="#91B8C1"/><Setter Property="Foreground" Value="White"/><Setter Property="BorderThickness" Value="0"/>
+   <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="Button"><Border x:Name="Surface" Background="{TemplateBinding Background}" CornerRadius="8" Padding="{TemplateBinding Padding}"><ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/></Border><ControlTemplate.Triggers><Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Surface" Property="Opacity" Value="0.8"/></Trigger><Trigger Property="IsEnabled" Value="False"><Setter TargetName="Surface" Property="Opacity" Value="0.45"/></Trigger></ControlTemplate.Triggers></ControlTemplate></Setter.Value></Setter>
+  </Style>
+  <Style TargetType="TextBox"><Setter Property="Padding" Value="10,7"/><Setter Property="BorderBrush" Value="#91B8C1"/><Setter Property="FontSize" Value="13"/><Setter Property="VerticalContentAlignment" Value="Center"/></Style>
+  <Style x:Key="Stat" TargetType="Border"><Setter Property="BorderBrush" Value="#D5E5E8"/><Setter Property="BorderThickness" Value="1"/><Setter Property="CornerRadius" Value="12"/><Setter Property="Padding" Value="18,14"/><Setter Property="Margin" Value="0,0,12,0"/></Style>
+  <Style x:Key="Count" TargetType="TextBlock"><Setter Property="FontSize" Value="30"/><Setter Property="FontWeight" Value="SemiBold"/><Setter Property="Margin" Value="0,6,0,0"/><Setter Property="Foreground" Value="#41656D"/></Style>
+  <Style TargetType="DataGridColumnHeader"><Setter Property="Background" Value="White"/><Setter Property="Foreground" Value="#64818A"/><Setter Property="Padding" Value="10,12"/><Setter Property="BorderBrush" Value="#BAD2D8"/><Setter Property="BorderThickness" Value="0,0,0,2"/></Style>
+  <Style TargetType="DataGridCell"><Setter Property="BorderThickness" Value="0"/><Setter Property="Padding" Value="10,8"/><Setter Property="VerticalContentAlignment" Value="Center"/><Setter Property="Template"><Setter.Value><ControlTemplate TargetType="DataGridCell"><Border Padding="{TemplateBinding Padding}" Background="Transparent"><ContentPresenter VerticalAlignment="Center"/></Border></ControlTemplate></Setter.Value></Setter></Style>
+  <Style TargetType="DataGridRow"><Setter Property="MinHeight" Value="50"/><Setter Property="Margin" Value="0,5"/><Setter Property="Background" Value="White"/><Setter Property="Foreground" Value="#2E3E44"/>
+   <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="DataGridRow"><Border Background="{TemplateBinding Background}" BorderBrush="#BAD2D8" BorderThickness="1" CornerRadius="18"><DataGridCellsPresenter/></Border></ControlTemplate></Setter.Value></Setter>
+   <Style.Triggers><Trigger Property="AlternationIndex" Value="1"><Setter Property="Background" Value="#EFF6F7"/></Trigger><Trigger Property="IsSelected" Value="True"><Setter Property="Background" Value="#C6DDE2"/></Trigger></Style.Triggers>
+  </Style>
+ </Window.Resources>
+ <Grid>
+  <Grid.ColumnDefinitions><ColumnDefinition Width="190"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+  <Border Background="#91B8C1"><DockPanel Margin="0,24,0,20">
+   <StackPanel DockPanel.Dock="Top"><Image Source="Assets/Online_Logo.png" Width="156" Height="64" Stretch="Uniform" Margin="16,0,16,10"/><TextBlock Text="打印工作站管理" Foreground="White" FontSize="16" HorizontalAlignment="Center" Margin="0,0,0,38"/>
+    <Border Background="White" CornerRadius="24,0,0,24" Margin="12,0,0,0" Padding="20,16"><TextBlock Text="操作记录" FontSize="16"/></Border>
+    <TextBlock Text="本机数据 · 管理员专用" Foreground="White" FontSize="11" Margin="24,22,0,0"/>
+   </StackPanel>
+   <Button DockPanel.Dock="Bottom" Content="退出管理页面" Click="ExitClicked" Margin="16" Background="#7AA3AD"/>
+   <TextBlock x:Name="AdminIdentity" Foreground="White" FontSize="12" TextWrapping="Wrap" VerticalAlignment="Bottom" Margin="24"/>
+  </DockPanel></Border>
+  <Grid Grid.Column="1" Margin="26,22">
+   <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+   <DockPanel><StackPanel><TextBlock Text="操作记录" FontSize="25" FontWeight="SemiBold"/><TextBlock Text="查看使用情况、会话详情与关联录像" Foreground="#738D94" Margin="0,7,0,0"/></StackPanel><Button x:Name="ExportButton" Content="导出当前筛选 CSV" Click="ExportClicked" HorizontalAlignment="Right" VerticalAlignment="Center"/></DockPanel>
+   <Border Grid.Row="1" BorderBrush="#91B8C1" BorderThickness="0,0,0,2" Margin="0,24,0,18">
+    <WrapPanel><Button x:Name="AllTab" Content="使用记录" Tag="All" Click="TabClicked"/><Button x:Name="RecordingTab" Content="录屏关联" Tag="Recorded" Click="TabClicked" Margin="8,0"/><Button x:Name="UnfinishedTab" Content="未结束" Tag="Unfinished" Click="TabClicked" Margin="0,0,8,0"/><Button x:Name="AbnormalTab" Content="异常记录" Tag="Abnormal" Click="TabClicked"/><Button Content="使用人员 / 频次" Click="PeopleClicked" Margin="8,0"/><Button Content="系统事件" Click="SystemEventsClicked" Background="White" Foreground="#527B86" Margin="8,0"/></WrapPanel>
+   </Border>
+   <StackPanel Grid.Row="2"><UniformGrid Columns="4"><Border Style="{StaticResource Stat}"><StackPanel><TextBlock Text="使用次数" Foreground="#738D94"/><TextBlock x:Name="SessionCount" Text="—" Style="{StaticResource Count}"/></StackPanel></Border><Border Style="{StaticResource Stat}"><StackPanel><TextBlock Text="使用人数" Foreground="#738D94"/><TextBlock x:Name="UserCount" Text="—" Style="{StaticResource Count}"/></StackPanel></Border><Border Style="{StaticResource Stat}"><StackPanel><TextBlock Text="未结束 · 待确认" Foreground="#738D94"/><TextBlock x:Name="UnfinishedCount" Text="—" Style="{StaticResource Count}"/></StackPanel></Border><Border Style="{StaticResource Stat}" Margin="0"><StackPanel><TextBlock Text="异常记录" Foreground="#738D94"/><TextBlock x:Name="AbnormalCount" Text="—" Style="{StaticResource Count}"/></StackPanel></Border></UniformGrid><TextBlock Text="统计对应当前筛选范围；未结束不代表实时在线。" FontSize="11" Foreground="#738D94" Margin="0,8,0,14"/></StackPanel>
+   <WrapPanel Grid.Row="3" Margin="0,0,0,12" VerticalAlignment="Center">
+    <TextBlock Text="姓名 / 学号 / 组织 / 电脑" VerticalAlignment="Center" Margin="0,0,8,8"/>
+    <TextBox x:Name="SearchBox" Width="226" MaxLength="100" ToolTip="姓名 / 学号 / 组织 / 电脑编号" KeyDown="SearchKeyDown" Margin="0,0,10,8" AutomationProperties.Name="搜索姓名、学号、组织或电脑"/>
+    <TextBlock Text="日期" VerticalAlignment="Center" Margin="0,0,8,8"/>
+    <DatePicker x:Name="FromDate" Width="123" Margin="0,0,8,8"/><TextBox x:Name="FromTime" Width="85" Text="00:00:00" ToolTip="开始时间 HH:mm:ss" Margin="0,0,8,8"/><TextBlock Text="至" VerticalAlignment="Center" Margin="0,0,8,8"/><DatePicker x:Name="UntilDate" Width="123" Margin="0,0,10,8"/>
+    <TextBox x:Name="UntilTime" Width="85" Text="23:59:59" ToolTip="结束时间 HH:mm:ss（含该秒）" Margin="0,0,8,8"/><CheckBox x:Name="OverlapCheck" Content="时段内使用（含跨时段会话）" VerticalAlignment="Center" Margin="0,0,8,8"/><Button Content="弹窗查看时间记录" Click="TimePopupClicked" Margin="0,0,8,8"/><Button Content="查询" Click="SearchClicked" Margin="0,0,8,8"/><Button Content="重置" Click="ResetClicked" Background="#EAF3F5" Foreground="#527B86" Margin="0,0,8,8"/><Button Content="刷新" Click="RefreshClicked" Background="#EAF3F5" Foreground="#527B86" Margin="0,0,8,8"/>
+    <CheckBox x:Name="AutoRefresh" Content="15 秒刷新" IsChecked="True" VerticalAlignment="Center" Margin="0,0,0,8" Foreground="#64818A"/>
+   </WrapPanel>
+   <Grid Grid.Row="4">
+    <DataGrid x:Name="SessionsGrid" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False" CanUserDeleteRows="False" CanUserSortColumns="False" SelectionMode="Single" HeadersVisibility="Column" GridLinesVisibility="None" BorderThickness="0" Background="White" AlternationCount="2" MouseDoubleClick="RowDoubleClicked" EnableRowVirtualization="True" HorizontalScrollBarVisibility="Auto">
+     <DataGrid.Columns>
+      <DataGridTextColumn Header="姓名" Binding="{Binding Name}" Width="80"/><DataGridTextColumn Header="学号" Binding="{Binding StudentId}" Width="120"/><DataGridTextColumn Header="所属组织" Binding="{Binding OrganizationLabel}" Width="*" MinWidth="120"/>
+      <DataGridTextColumn Header="电脑" Binding="{Binding ComputerId}" Width="85"/><DataGridTextColumn Header="开始时间" Binding="{Binding StartedLabel}" Width="166"/><DataGridTextColumn Header="时长" Binding="{Binding DurationLabel}" Width="90"/><DataGridTextColumn Header="状态" Binding="{Binding ReasonLabel}" Width="155"/>
+      <DataGridTemplateColumn Header="操作" Width="82"><DataGridTemplateColumn.CellTemplate><DataTemplate><Button Content="详情" Padding="10,5" Click="DetailClicked"/></DataTemplate></DataGridTemplateColumn.CellTemplate></DataGridTemplateColumn>
+     </DataGrid.Columns>
+    </DataGrid>
+    <TextBlock x:Name="EmptyLabel" Text="暂无使用记录" Visibility="Collapsed" HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="#738D94" FontSize="17"/>
+   </Grid>
+   <DockPanel Grid.Row="5" Margin="0,16,0,10"><TextBlock x:Name="ResultLabel" VerticalAlignment="Center" Foreground="#64818A"/><StackPanel Orientation="Horizontal" HorizontalAlignment="Right"><Button x:Name="PreviousButton" Content="上一页" Click="PreviousClicked" Background="#EAF3F5" Foreground="#527B86"/><TextBlock x:Name="PageLabel" Text="1 / 1" VerticalAlignment="Center" Margin="16,0"/><Button x:Name="NextButton" Content="下一页" Click="NextClicked" Background="#EAF3F5" Foreground="#527B86"/></StackPanel></DockPanel>
+   <TextBlock Grid.Row="6" x:Name="StatusLabel" Foreground="#64818A" FontSize="12" TextWrapping="Wrap"/>
+  </Grid>
+ </Grid>
+</Window>

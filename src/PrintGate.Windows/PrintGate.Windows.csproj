@@ -1,0 +1,5 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><OutputType>WinExe</OutputType><TargetFramework>net8.0-windows</TargetFramework><UseWPF>true</UseWPF><EnableWindowsTargeting>true</EnableWindowsTargeting><AssemblyName>PrintGate</AssemblyName><ApplicationManifest>app.manifest</ApplicationManifest></PropertyGroup>
+  <ItemGroup><ProjectReference Include="../PrintGate.Core/PrintGate.Core.csproj" /><None Include="appsettings.json" CopyToOutputDirectory="PreserveNewest" /></ItemGroup>
+  <ItemGroup><Resource Include="Assets/*.png" /></ItemGroup>
+</Project>
