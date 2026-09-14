@@ -41,8 +41,53 @@ public sealed record LocalAdministratorCredential(int Version, string Username, 
 
 public sealed record LoginResult(Identity Identity, bool IsLocalAdministrator);
 
+public sealed record CachedCampusCredential(int Version, string Account, Identity Identity, string Salt, string PasswordHash, int Iterations)
+{
+    public const int WorkFactor = LocalAdministratorCredential.WorkFactor;
+    public static CachedCampusCredential Create(string account, Identity identity, string password)
+    {
+        account = account.Trim();
+        if (string.IsNullOrWhiteSpace(account) || account.Length > 64 || account.Any(char.IsControl))
+            throw new ArgumentException("账号格式无效。");
+        if (string.IsNullOrEmpty(password) || password.Length > 256)
+            throw new ArgumentException("密码格式无效。");
+        var salt = RandomNumberGenerator.GetBytes(32);
+        var hash = Rfc2898DeriveBytes.Pbkdf2(password, salt, WorkFactor, HashAlgorithmName.SHA256, 32);
+        return new(1, account, identity, Convert.ToBase64String(salt), Convert.ToBase64String(hash), WorkFactor);
+    }
+    public bool MatchesAccount(string account) => string.Equals(Account, account.Trim(), StringComparison.OrdinalIgnoreCase);
+    public void Validate()
+    {
+        if (Version != 1 || Iterations != WorkFactor || string.IsNullOrWhiteSpace(Account) || Account.Length > 64 || Account.Any(char.IsControl)
+            || string.IsNullOrWhiteSpace(Identity.StudentId) || Identity.StudentId.Length > 64 || Identity.StudentId.Any(char.IsControl)
+            || string.IsNullOrWhiteSpace(Identity.Name) || Identity.Name.Length > 128 || Identity.Name.Any(char.IsControl)
+            || Salt is null || PasswordHash is null)
+            throw new InvalidDataException("本地认证缓存格式无效。");
+        try
+        {
+            if (Convert.FromBase64String(Salt).Length != 32 || Convert.FromBase64String(PasswordHash).Length != 32)
+                throw new InvalidDataException("本地认证缓存格式无效。");
+        }
+        catch (FormatException) { throw new InvalidDataException("本地认证缓存格式无效。"); }
+    }
+    public bool Verify(string password)
+    {
+        Validate();
+        if (password.Length > 256) return false;
+        var computed = Rfc2898DeriveBytes.Pbkdf2(password, Convert.FromBase64String(Salt), Iterations, HashAlgorithmName.SHA256, 32);
+        try { return CryptographicOperations.FixedTimeEquals(computed, Convert.FromBase64String(PasswordHash)); }
+        finally { CryptographicOperations.ZeroMemory(computed); }
+    }
+}
+
+public interface ICampusCredentialCache
+{
+    CachedCampusCredential? Find(string account);
+    void Save(CachedCampusCredential credential);
+}
+
 // Local credentials are never sent to the campus authentication service, even on failure.
-public sealed class LoginAuthenticator(IAuthenticator campus, LocalAdministratorCredential? local, Func<DateTimeOffset>? now = null)
+public sealed class LoginAuthenticator(IAuthenticator campus, LocalAdministratorCredential? local, ICampusCredentialCache? campusCache = null, Func<DateTimeOffset>? now = null)
 {
     private readonly SemaphoreSlim gate = new(1, 1);
     private int failures;
@@ -50,7 +95,18 @@ public sealed class LoginAuthenticator(IAuthenticator campus, LocalAdministrator
     public async Task<LoginResult> AuthenticateAsync(string account, string password, bool localMode, CancellationToken cancellationToken)
     {
         if (!localMode && local?.MatchesUsername(account) != true)
-            return new(await campus.AuthenticateAsync(account, password, cancellationToken), false);
+        {
+            var cached = campusCache?.Find(account);
+            if (cached is not null)
+            {
+                var verified = await Task.Run(() => cached.Verify(password), cancellationToken);
+                if (!verified) throw new AuthenticationException("账号或密码错误。");
+                return new(cached.Identity, false);
+            }
+            var identity = await campus.AuthenticateAsync(account, password, cancellationToken);
+            campusCache?.Save(CachedCampusCredential.Create(account, identity, password));
+            return new(identity, false);
+        }
         await gate.WaitAsync(cancellationToken);
         try
         {

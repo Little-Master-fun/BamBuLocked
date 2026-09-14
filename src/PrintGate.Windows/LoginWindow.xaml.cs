@@ -69,7 +69,7 @@ public partial class LoginWindow : Window
             session = new SessionCoordinator(audit, settings.ComputerId);
             var handler = new HttpClientHandler { AllowAutoRedirect = false, UseCookies = false };
             var client = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(settings.RequestTimeoutSeconds), MaxResponseContentBufferSize = 128 * 1024 };
-            authenticator = new LoginAuthenticator(new CasAuthenticator(client, new Uri(settings.CasBaseUrl), settings.CasService), LocalAdministratorSettings.Load());
+            authenticator = new LoginAuthenticator(new CasAuthenticator(client, new Uri(settings.CasBaseUrl), settings.CasService), LocalAdministratorSettings.Load(), CampusCredentialStore.Load());
             mouse = new MouseMonitor(studioDesktop);
             recorder = new ScreenRecorder(settings, studioDesktopName);
             if (!startupProbe) CleanupRecordings();

@@ -10,6 +10,16 @@ public sealed class LocalAdministratorTests
         public Task<Identity> AuthenticateAsync(string account, string password, CancellationToken cancellationToken)
         { Calls++; return Task.FromResult(new Identity("001", "Campus user")); }
     }
+    private sealed class Cache : ICampusCredentialCache
+    {
+        private readonly List<CachedCampusCredential> entries = [];
+        public CachedCampusCredential? Find(string account) => entries.FirstOrDefault(x => x.MatchesAccount(account));
+        public void Save(CachedCampusCredential credential)
+        {
+            entries.RemoveAll(x => x.MatchesAccount(credential.Account));
+            entries.Add(credential);
+        }
+    }
     [Fact]
     public void HashIsSaltedAndDoesNotStorePassword()
     {
@@ -34,6 +44,24 @@ public sealed class LocalAdministratorTests
         Assert.False(result.IsLocalAdministrator); Assert.Equal(1,campus.Calls);
     }
     [Fact]
+    public async Task CampusSuccessIsCachedAndNextLoginDoesNotCallCampus()
+    {
+        var campus = new Campus(); var cache = new Cache();
+        var login = new LoginAuthenticator(campus, null, cache);
+        var first = await login.AuthenticateAsync("001", "campus-password", false, default);
+        var second = await login.AuthenticateAsync("001", "campus-password", false, default);
+        Assert.Equal("Campus user", first.Identity.Name); Assert.Equal(first.Identity, second.Identity); Assert.Equal(1, campus.Calls);
+    }
+    [Fact]
+    public async Task CachedCampusAccountRejectsIncorrectPasswordWithoutCampus()
+    {
+        var campus = new Campus(); var cache = new Cache();
+        var login = new LoginAuthenticator(campus, null, cache);
+        await login.AuthenticateAsync("001", "campus-password", false, default);
+        await Assert.ThrowsAsync<AuthenticationException>(() => login.AuthenticateAsync("001", "wrong-password", false, default));
+        Assert.Equal(1, campus.Calls);
+    }
+    [Fact]
     public async Task UnconfiguredAdministratorIsDeniedWithoutNetwork()
     {
         var campus = new Campus();
@@ -43,7 +71,7 @@ public sealed class LocalAdministratorTests
     [Fact]
     public async Task FiveFailuresBlockEvenCorrectPasswordUntilCooldown()
     {
-        var time = DateTimeOffset.UtcNow; var login = new LoginAuthenticator(new Campus(),Credential,()=>time);
+        var time = DateTimeOffset.UtcNow; var login = new LoginAuthenticator(new Campus(), Credential, now: () => time);
         for (var i=0;i<5;i++) await Assert.ThrowsAsync<AuthenticationException>(()=>login.AuthenticateAsync("wrong-name","wrong",true,default));
         await Assert.ThrowsAsync<AuthenticationException>(()=>login.AuthenticateAsync("MyAdmin","test-only-password-123!",true,default));
         time=time.AddSeconds(31);
