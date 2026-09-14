@@ -32,7 +32,7 @@ public sealed class SessionTests : IDisposable
     {
         var id = audit.Begin(Alice, "TEST", "测试组织");
         audit.End(id, "studio_closed");
-        using var connection = new SqliteConnection($"Data Source={DbPath}"); connection.Open();
+        using var connection = new SqliteConnection($"Data Source={DbPath};Pooling=False"); connection.Open();
         using var command = connection.CreateCommand(); command.CommandText = "SELECT student_id,name,end_reason,ended_at FROM sessions";
         using var reader = command.ExecuteReader(); Assert.True(reader.Read());
         Assert.Equal("001", reader.GetString(0)); Assert.Equal("测试甲", reader.GetString(1));
@@ -108,7 +108,7 @@ public sealed class SessionTests : IDisposable
         Assert.Equal("新组织", Scalar("SELECT organization FROM sessions WHERE student_id='002'"));
     }
 
-    private void Execute(string sql) { using var c = new SqliteConnection($"Data Source={DbPath}"); c.Open(); using var q = c.CreateCommand(); q.CommandText = sql; q.ExecuteNonQuery(); }
-    private object? Scalar(string sql) { using var c = new SqliteConnection($"Data Source={DbPath}"); c.Open(); using var q = c.CreateCommand(); q.CommandText = sql; return q.ExecuteScalar(); }
+    private void Execute(string sql) { using var c = new SqliteConnection($"Data Source={DbPath};Pooling=False"); c.Open(); using var q = c.CreateCommand(); q.CommandText = sql; q.ExecuteNonQuery(); }
+    private object? Scalar(string sql) { using var c = new SqliteConnection($"Data Source={DbPath};Pooling=False"); c.Open(); using var q = c.CreateCommand(); q.CommandText = sql; return q.ExecuteScalar(); }
     public void Dispose() => Directory.Delete(directory, true);
 }

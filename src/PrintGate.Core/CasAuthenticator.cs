@@ -1,4 +1,5 @@
 using System.Net;
+using System.Text;
 using System.Xml;
 using System.Xml.Linq;
 
@@ -22,11 +23,14 @@ public sealed class CasAuthenticator(HttpClient client, Uri baseUri, string serv
             {
                 ["username"] = account.Trim(), ["password"] = password
             });
+            credentials.Headers.ContentType!.CharSet = "UTF-8";
             tgt = await PostTicket("restlet/tickets", credentials, "TGT-", cancellationToken);
-            using var target = new FormUrlEncodedContent(new Dictionary<string, string> { ["service"] = service });
+            // SDU's tested REST exchange expects the service string as text, not a URL-encoded form.
+            using var target = new StringContent("service=" + service, Encoding.UTF8, "text/plain");
+            target.Headers.ContentType!.CharSet = null;
             var st = await PostTicket($"restlet/tickets/{Uri.EscapeDataString(tgt)}", target, "ST-", cancellationToken);
             var path = $"serviceValidate?ticket={Uri.EscapeDataString(st)}&service={Uri.EscapeDataString(service)}";
-            using var response = await client.GetAsync(new Uri(baseUri, path), cancellationToken);
+            using var response = await Send(HttpMethod.Get, path, null, cancellationToken);
             if (!response.IsSuccessStatusCode) throw new AuthenticationException("认证校验失败，请稍后重试。");
             return ParseIdentity(await response.Content.ReadAsStringAsync(cancellationToken));
         }
@@ -41,7 +45,7 @@ public sealed class CasAuthenticator(HttpClient client, Uri baseUri, string serv
                 try
                 {
                     using var cleanupTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(3));
-                    using var cleanup = await client.DeleteAsync(new Uri(baseUri, $"restlet/tickets/{Uri.EscapeDataString(tgt)}"), cleanupTimeout.Token);
+                    using var cleanup = await Send(HttpMethod.Delete, $"restlet/tickets/{Uri.EscapeDataString(tgt)}", null, cleanupTimeout.Token);
                 }
                 catch (HttpRequestException) { }
                 catch (OperationCanceledException) { }
@@ -51,7 +55,7 @@ public sealed class CasAuthenticator(HttpClient client, Uri baseUri, string serv
 
     private async Task<string> PostTicket(string path, HttpContent body, string prefix, CancellationToken ct)
     {
-        using var response = await client.PostAsync(new Uri(baseUri, path), body, ct);
+        using var response = await Send(HttpMethod.Post, path, body, ct);
         if (response.StatusCode is HttpStatusCode.BadRequest or HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
             throw new AuthenticationException("认证未通过，请检查账号密码或联系管理员。");
         if (!response.IsSuccessStatusCode) throw new AuthenticationException("认证服务暂时不可用。");
@@ -59,6 +63,18 @@ public sealed class CasAuthenticator(HttpClient client, Uri baseUri, string serv
         if (!ticket.StartsWith(prefix, StringComparison.Ordinal) || ticket.Length > 4096 || ticket.Any(char.IsWhiteSpace))
             throw new AuthenticationException("认证服务返回了不支持的票据格式。");
         return ticket;
+    }
+
+    private async Task<HttpResponseMessage> Send(HttpMethod method, string path, HttpContent? content, CancellationToken ct)
+    {
+        using var request = new HttpRequestMessage(method, new Uri(baseUri, path))
+        {
+            Content = content, Version = HttpVersion.Version11, VersionPolicy = HttpVersionPolicy.RequestVersionExact
+        };
+        // Match the local test proxy that was verified against the school endpoint.
+        request.Headers.UserAgent.ParseAdd("axios/1.7.9 PrintGateTest/1.0");
+        request.Headers.Accept.ParseAdd("application/json, text/plain, */*");
+        return await client.SendAsync(request, ct);
     }
 
     public static Identity ParseIdentity(string xml)

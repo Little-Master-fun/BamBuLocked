@@ -8,6 +8,7 @@ param(
     [string]$BackupPath = 'C:\ProgramData\PrintGate\DeploymentBackup'
 )
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'Set-WorkstationDirectoryAcl.ps1')
 $principal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
 if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) { throw 'Run as administrator.' }
 $user = Get-LocalUser -Name $KioskUser
@@ -31,17 +32,13 @@ if (Test-Path $InstallPath) { throw 'Install directory already exists. Choose a 
 New-Item -ItemType Directory -Force $InstallPath, $BackupPath, 'C:\ProgramData\PrintGate\Data' | Out-Null
 New-Item -ItemType Directory -Force $recordings | Out-Null
 New-Item -ItemType File -Force (Join-Path $recordings '.printgate-recordings') | Out-Null
-& icacls.exe $recordings '/inheritance:r' '/grant:r' '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' "*${sid}:(OI)(CI)M" /T | Out-Null
-if ($LASTEXITCODE -ne 0) { throw 'Failed to configure recordings directory.' }
+Set-WorkstationDirectoryAcl -Path $recordings -Grants @('*S-1-5-18:(OI)(CI)F', '*S-1-5-32-544:(OI)(CI)F', "*${sid}:(OI)(CI)M")
 Copy-Item (Join-Path $PackagePath '*') $InstallPath -Recurse -Force
 # Config and binaries: SYSTEM/admin write; kiosk read/execute only.
-& icacls.exe $InstallPath '/inheritance:r' '/grant:r' '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' "*${sid}:(OI)(CI)RX" /T | Out-Null
-if ($LASTEXITCODE -ne 0) { throw 'Failed to protect installation directory.' }
-& icacls.exe $BackupPath '/inheritance:r' '/grant:r' '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' /T | Out-Null
-if ($LASTEXITCODE -ne 0) { throw 'Failed to protect deployment backup.' }
+Set-WorkstationDirectoryAcl -Path $InstallPath -Grants @('*S-1-5-18:(OI)(CI)F', '*S-1-5-32-544:(OI)(CI)F', "*${sid}:(OI)(CI)RX")
+Set-WorkstationDirectoryAcl -Path $BackupPath -Grants @('*S-1-5-18:(OI)(CI)F', '*S-1-5-32-544:(OI)(CI)F')
 # MVP logs are writable by the kiosk account; they are NOT tamper-proof audit storage.
-& icacls.exe 'C:\ProgramData\PrintGate\Data' '/inheritance:r' '/grant:r' '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' "*${sid}:(OI)(CI)M" /T | Out-Null
-if ($LASTEXITCODE -ne 0) { throw 'Failed to configure data directory.' }
+Set-WorkstationDirectoryAcl -Path 'C:\ProgramData\PrintGate\Data' -Grants @('*S-1-5-18:(OI)(CI)F', '*S-1-5-32-544:(OI)(CI)F', "*${sid}:(OI)(CI)M")
 $mount = "PrintGate_$($user.Name)"
 & reg.exe load "HKU\$mount" "$profile\NTUSER.DAT" | Out-Null
 if ($LASTEXITCODE -ne 0) { throw 'Failed to load kiosk registry hive.' }

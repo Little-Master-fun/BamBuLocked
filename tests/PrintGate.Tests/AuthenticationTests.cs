@@ -33,6 +33,12 @@ public sealed class AuthenticationTests
         var requests = new List<(string Method, string Path, string Body)>();
         using var client = new HttpClient(new FakeHandler(async request =>
         {
+            Assert.Equal("axios/1.7.9 PrintGateTest/1.0", request.Headers.UserAgent.ToString());
+            Assert.Equal("application/json, text/plain, */*", request.Headers.Accept.ToString());
+            Assert.Equal(HttpVersion.Version11, request.Version);
+            Assert.Equal(HttpVersionPolicy.RequestVersionExact, request.VersionPolicy);
+            if (requests.Count == 0) Assert.Equal("application/x-www-form-urlencoded; charset=UTF-8", request.Content!.Headers.ContentType!.ToString());
+            if (requests.Count == 1) Assert.Equal("text/plain", request.Content!.Headers.ContentType!.ToString());
             requests.Add((request.Method.Method, request.RequestUri!.PathAndQuery,
                 request.Content is null ? "" : await request.Content.ReadAsStringAsync()));
             var body = requests.Count switch { 1 => "TGT-test", 2 => "ST-test", 3 => Success, _ => "" };
@@ -42,6 +48,7 @@ public sealed class AuthenticationTests
         var identity = await auth.AuthenticateAsync("00123456", "a&b+c=秘密", CancellationToken.None);
         Assert.Equal("00123456", identity.StudentId);
         Assert.Equal("username=00123456&password=a%26b%2Bc%3D%E7%A7%98%E5%AF%86", requests[0].Body);
+        Assert.Equal("service=https://example.invalid/service?m=up", requests[1].Body);
         Assert.Equal("DELETE", requests[3].Method);
         Assert.Equal("/cas/restlet/tickets/TGT-test", requests[3].Path);
         Assert.Contains("service=https%3A%2F%2Fexample.invalid", requests[2].Path);

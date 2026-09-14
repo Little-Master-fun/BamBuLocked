@@ -95,3 +95,40 @@ Set-AppLockerPolicy -XmlPolicy C:\ProgramData\PrintGate\DeploymentBackup\applock
 脚本恢复部署前的用户策略值，不删除程序与日志，不替你恢复手动应用的 AppLocker。若配置了 Windows 自动登录，应单独撤销。备份目录只允许管理员/SYSTEM 访问。
 
 录屏版本首次部署前需运行 Install-Recorder.ps1 安装编码器，设置专用录像目录，并按 RECORDING.md 验证自动清理及采集行为。
+## 已部署版本的文件权限修复
+
+如果专用账户登录后未出现 PrintGate，先用另一管理员账户运行
+`scripts/Diagnose-Workstation.ps1 -KioskUser Printer`。旧版部署脚本对目录和文件一起执行
+`icacls /inheritance:r /grant:r ... /T`，在 Windows 10 上会使普通文件的 ACL 为空，导致程序或配置无法读取。
+
+完全注销专用账户后，以管理员身份运行
+`scripts/Repair-WorkstationPermissions.ps1 -KioskUser Printer`。
+该脚本根据原部署记录核对账户，对程序、数据和专用录像目录先备份 ACL，再恢复正确继承。
+备份保存在 `C:\ProgramData\PrintGate\PermissionRepair-时间戳`；`restore-map.jsonl` 记录各 ACL 文件及恢复父目录。
+恢复单个目录原权限时，用管理员运行 `icacls <Parent> /restore <AclFile>`，参数取自该映射文件。
+程序目录仅授予专用账户读取/执行，数据和录像目录授予修改，管理员及 SYSTEM 保留完全控制。
+修复后重新登录专用账户验收。若诊断显示用户注册表配置文件无法加载，不要直接删除账户或配置文件，应继续检查或在该账户已登录时诊断。
+
+## 登录黑屏的启动诊断
+
+旧版 STA 主线程初始化后调用 `SetThreadDesktop`，在本机实测返回 Win32 170，导致自定义登录入口退出、留下黑屏。
+新版先创建认证桌面，再使用 `CreateProcess` 的 `lpDesktop` 在该桌面直接启动 UI 子进程；引导进程保留桌面句柄及会话单实例锁。
+UI 和看护进程仍运行在专用普通账户下。
+
+`PrintGate.exe --diagnose-startup` 会在专用桌面创建真实登录窗口，检查配置初始化后退出；不切换当前屏幕、不发出锁屏请求，也不运行会话恢复和录像清理。
+退出码 0 表示窗口初始化成功，1 表示失败。它不能代替真实登录后的屏幕切换、交互、校园认证和打印验收。
+诊断日志保存在运行账户的 `%LOCALAPPDATA%\PrintGate\Diagnostics\startup-进程号.log`，仅包含阶段、异常类型、错误码与代码堆栈，不记录密码或认证响应。
+
+## 使用者提示和 Bambu 预启动
+
+普通用户认证成功后，打印桌面顶部显示姓名、学号和本次使用时长（HH:mm:ss，按单调时钟计时）；登录成功气泡显示 5 秒。
+信息栏不抢输入焦点，鼠标可穿透，不拦截 Bambu 的标题栏操作。返回登录页时隐藏并清空身份显示；重新认证后重新计时。
+管理员进入记录页面时显示登录成功气泡。
+
+首次进入登录页及 Bambu 真正退出后，PrintGate 在隐藏的打印桌面提前启动 Bambu；登录成功直接进入已启动的软件。
+Bambu 关闭后才结束使用、返回登录页，未改造关闭按钮。预启动减少启动等待，但不能保证在电脑慢、首次配置或登录过快时完全没有加载时间。
+鼠标超时会强制关闭 Bambu 及其子进程，随后才预启动下一次使用的软件；因此超时前未保存的工程会丢失。Windows 锁定仍保留未关闭的工程，仅允许原使用者继续；不会为了预启动强杀或丢弃未保存工程。
+验收时检查气泡 5 秒消失、信息栏持续计时、鼠标穿透、关闭后自动预启动、超时保留工程和其他用户被拒绝接管。
+启动诊断还会验证信息栏辅助进程在打印桌面的显示/隐藏确认，不会在诊断模式启动 Bambu。
+
+登录桌面启动时通过 Windows Shell 激活文本输入服务 ctfmon，其 UIAccess 清单不能由普通账户直接 CreateProcess 启动（会返回 740）。所属组织输入框默认选择中文并启用 Native 转换模式，不显示切换按钮、不拦截 Shift，由输入法处理 Shift 中英文切换。Printer 账户必须已安装中文输入法；未发现中文输入语言时会显示提示。实际中文候选框、选词和 Bambu 内输入需在 Printer 账户人工验收。

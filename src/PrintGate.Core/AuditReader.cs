@@ -4,7 +4,7 @@ using Microsoft.Data.Sqlite;
 namespace PrintGate.Core;
 
 public enum SessionView { All, Unfinished, Abnormal, Recorded }
-public sealed record AuditFilter(string Keyword = "", DateTimeOffset? From = null, DateTimeOffset? Until = null, SessionView View = SessionView.All, string? StudentId = null, bool Overlap = false);
+public sealed record AuditFilter(string Keyword = "", DateTimeOffset? From = null, DateTimeOffset? Until = null, SessionView View = SessionView.All, string? StudentId = null, bool Overlap = false, DateTimeOffset? At = null);
 public sealed record AuditPerson(string StudentId, string Name, long Uses, string FirstUsed, string LastUsed);
 public sealed record PeoplePage(IReadOnlyList<AuditPerson> Rows, long Total);
 public sealed record AuditSession(string SessionId, string StudentId, string Name, string? Organization, string ComputerId,
@@ -56,6 +56,11 @@ public sealed class AuditReader(string databasePath)
             clauses.Add("(instr(s.name,$query)>0 OR instr(s.student_id,$query)>0 OR instr(s.computer_id,$query)>0" + org + ")");
             command.Parameters.AddWithValue("$query", query);
         }
+        if (filter.At.HasValue)
+        {
+            clauses.Add("s.started_at <= $at AND (s.ended_at IS NULL OR s.ended_at >= $at)");
+            command.Parameters.AddWithValue("$at", filter.At.Value.ToUniversalTime().ToString("O"));
+        }
         if (filter.StudentId is not null) { clauses.Add("s.student_id=$studentId"); command.Parameters.AddWithValue("$studentId", filter.StudentId); }
         if (filter.From.HasValue) { clauses.Add(filter.Overlap ? "(s.ended_at IS NULL OR s.ended_at >= $from)" : "s.started_at >= $from"); command.Parameters.AddWithValue("$from", filter.From.Value.ToUniversalTime().ToString("O")); }
         if (filter.Until.HasValue) { clauses.Add("s.started_at < $until"); command.Parameters.AddWithValue("$until", filter.Until.Value.ToUniversalTime().ToString("O")); }
@@ -99,6 +104,12 @@ public sealed class AuditReader(string databasePath)
         if (sessionId is not null) { where.Add("session_id=$id"); command.Parameters.AddWithValue("$id", sessionId); }
         else
         {
+            if (filter.At.HasValue)
+            {
+                where.Add("occurred_at >= $at AND occurred_at < $afterAt");
+                command.Parameters.AddWithValue("$at",filter.At.Value.ToUniversalTime().ToString("O"));
+                command.Parameters.AddWithValue("$afterAt",filter.At.Value.AddSeconds(1).ToUniversalTime().ToString("O"));
+            }
             if (filter.From.HasValue) { where.Add("occurred_at >= $from"); command.Parameters.AddWithValue("$from", filter.From.Value.ToUniversalTime().ToString("O")); }
             if (filter.Until.HasValue) { where.Add("occurred_at < $until"); command.Parameters.AddWithValue("$until", filter.Until.Value.ToUniversalTime().ToString("O")); }
         }
@@ -157,6 +168,8 @@ public static class AuditLabels
         "admin_view_opened" => "管理员进入记录页面", "admin_view_closed" => "管理员退出记录页面", "admin_idle_timeout" => "管理员超时退出",
         "authenticated" => "身份认证通过", "authentication_failed" => "认证失败", "application_started" => "工作站程序启动",
         "studio_started" => "打开打印软件", "studio_resumed" => "恢复保留工程", "studio_closed" => "正常关闭",
+        "studio_prestarted" => "在登录页提前启动打印软件", "studio_preloaded_opened" => "进入已预启动的打印软件",
+        "studio_forced_closed_timeout" => "鼠标超时后强制关闭打印软件",
         "mouse_idle_timeout" => "鼠标超时锁定", "windows_session_locked" => "Windows 会话锁定",
         "maintenance_requested" => "进入管理员维护", "recording_started" => "开始录屏", "recording_stopped" => "结束录屏",
         "old_recordings_cleaned" => "已清理旧录像", "application_fault" => "程序或录屏异常",

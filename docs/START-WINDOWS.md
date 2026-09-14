@@ -4,10 +4,9 @@
 
 1. 解压运行包，修改 `app/appsettings.json` 的 StudioPath 和 ComputerId。
 2. 创建独立标准账户，例如 PrintOperator，登录一次配置 Studio 和打印机，然后完全注销。
-3. 在另一管理员账户的 64 位 Windows PowerShell 中执行：
+3. 在另一管理员账户的 64 位 Windows PowerShell 中执行。离线完整包已包含 `app/Tools/ffmpeg.exe`，无需下载：
 
 ```powershell
-.\scripts\Install-Recorder.ps1 -PackagePath .\app
 .\scripts\Install-Workstation.ps1 -KioskUser PrintOperator -PackagePath .\app
 ```
 
@@ -17,6 +16,6 @@
 
 日志：`C:\ProgramData\PrintGate\Data\audit.db`。默认鼠标不移动 300 秒后锁定，键盘输入不重置计时；保留工程仅原操作人能继续。
 
-录屏版本首次部署前需运行 Install-Recorder.ps1 安装编码器，设置专用录像目录，并按 RECORDING.md 验证自动清理及采集行为。
+如果使用源码自行发布，或旧运行包中没有 `app/Tools/ffmpeg.exe`，才需要先联网运行 `scripts/Install-Recorder.ps1 -PackagePath .\app`。离线完整包跳过这一步。设置专用录像目录，并按 RECORDING.md 验证自动清理及采集行为。校园认证仍需联网，离线安装不等于离线登录。
 
 管理员查看记录：切换到独立 Windows 管理员账户，运行 `scripts/Start-Admin.ps1` 并确认 UAC。默认打开已安装在 `C:\Program Files\PrintGate` 的程序。若只想用解压包查看本机记录，运行 `scripts/Start-Admin.ps1 -AppPath .\app\PrintGate.exe`。详情见 ADMIN.md。

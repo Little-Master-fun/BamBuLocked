@@ -1,4 +1,6 @@
 using System.Diagnostics;
+using System.Globalization;
+using System.Windows.Input;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media.Imaging;
@@ -18,21 +20,26 @@ public partial class LoginWindow : Window
     private Settings? settings;
     private AuditStore? audit;
     private SessionCoordinator? session;
-    private IAuthenticator? authenticator;
+    private LoginAuthenticator? authenticator;
     private MouseMonitor? mouse;
     private MouseMonitor? adminMouse;
     private AdminWindow? adminWindow;
     private Process? studio;
+    private StudioBanner? studioBanner;
+    private long studioLaunchedAt;
     private bool busy, faulted;
     private int authenticationEpoch;
     private ScreenRecorder? recorder;
     private CancellationTokenSource? captureCancellation;
     private bool recordingStopping, cleanupBusy;
     private long lastCleanup;
+    private readonly bool startupProbe;
+    internal bool InitializationSucceeded => !faulted;
 
     internal LoginWindow(IntPtr authDesktop, IntPtr studioDesktop, string studioDesktopName,
-        EventWaitHandle heartbeat, Process watchdog)
+        EventWaitHandle heartbeat, Process watchdog, bool startupProbe = false)
     {
+        this.startupProbe = startupProbe;
         this.authDesktop = authDesktop;
         this.studioDesktop = studioDesktop;
         this.studioDesktopName = studioDesktopName;
@@ -43,9 +50,9 @@ public partial class LoginWindow : Window
             PasswordInput.Password.Length == 0 ? Visibility.Visible : Visibility.Collapsed;
         Closing += (_, e) => e.Cancel = true;
         timer = new DispatcherTimer(TimeSpan.FromMilliseconds(500), DispatcherPriority.Normal, Tick, Dispatcher);
-        timer.Start();
+        if (!startupProbe) timer.Start();
         heartbeat.Set();
-        SystemEvents.SessionSwitch += (_, e) =>
+        if (!startupProbe) SystemEvents.SessionSwitch += (_, e) =>
         {
             if (e.Reason is SessionSwitchReason.SessionLock or SessionSwitchReason.SessionLogoff
                 or SessionSwitchReason.ConsoleDisconnect or SessionSwitchReason.RemoteDisconnect)
@@ -55,26 +62,32 @@ public partial class LoginWindow : Window
         {
             settings = Settings.Load();
             DeviceLabel.Text = settings.ComputerId;
-            IdleLabel.Text = $"登录后录制打印桌面操作（不录音），录像保留 7 天；空间不足时优先删除最早录像。\n鼠标连续 {settings.IdleSeconds} 秒未移动将重新锁定。\n系统记录姓名、学号、组织及使用时间，不保存密码。管理员认证后进入记录页，组织可留空。";
+            IdleLabel.Text = $"使用期间会进行操作录屏。\n鼠标连续 {settings.IdleSeconds} 秒未移动，将自动关闭操作页面并返回登录页。";
             var dataPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "PrintGate", "Data", "audit.db");
             audit = new AuditStore(dataPath);
-            audit.RecoverInterrupted();
+            if (!startupProbe) audit.RecoverInterrupted();
             session = new SessionCoordinator(audit, settings.ComputerId);
             var handler = new HttpClientHandler { AllowAutoRedirect = false, UseCookies = false };
             var client = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(settings.RequestTimeoutSeconds), MaxResponseContentBufferSize = 128 * 1024 };
-            authenticator = new CasAuthenticator(client, new Uri(settings.CasBaseUrl), settings.CasService);
+            authenticator = new LoginAuthenticator(new CasAuthenticator(client, new Uri(settings.CasBaseUrl), settings.CasService), LocalAdministratorSettings.Load());
             mouse = new MouseMonitor(studioDesktop);
             recorder = new ScreenRecorder(settings, studioDesktopName);
-            CleanupRecordings();
-            foreach (var existing in Process.GetProcessesByName(Path.GetFileNameWithoutExtension(settings.StudioPath)))
+            if (!startupProbe) CleanupRecordings();
+            // The diagnostic mode never takes ownership of Studio or starts it.
+            if (!startupProbe) foreach (var existing in Process.GetProcessesByName(Path.GetFileNameWithoutExtension(settings.StudioPath)))
             {
                 using (existing)
                     if (existing.SessionId == Process.GetCurrentProcess().SessionId)
                         throw new InvalidOperationException("检测到已有 Studio 进程。请管理员注销此 Windows 会话后重新进入，避免接管未确认的工程。");
             }
+            if (!startupProbe)
+            {
+                studioBanner = new StudioBanner(studioDesktopName);
+                EnsureStudioPreloaded();
+            }
         }
-        catch (InvalidOperationException e) { Fault(e.Message); }
-        catch { Fault("初始化失败，请管理员检查配置及日志目录的写入权限。"); }
+        catch (InvalidOperationException e) { StartupDiagnostics.Write("login-initialization-failed", e); Fault(e.Message); }
+        catch (Exception e) { StartupDiagnostics.Write("login-initialization-failed", e); Fault("初始化失败，请管理员检查配置及日志目录的写入权限。"); }
         Loaded += (_, _) => AccountBox.Focus();
     }
 
@@ -86,25 +99,31 @@ public partial class LoginWindow : Window
         AccountBox.IsEnabled = false;
         PasswordInput.IsEnabled = false;
         OrganizationBox.IsEnabled = false;
+        LocalAdminLogin.IsEnabled = false;
         StatusLabel.Text = "正在验证身份，请稍候…";
         var password = PasswordInput.Password;
         var epoch = authenticationEpoch;
         PasswordInput.Clear();
         try
         {
-            var identity = await authenticator.AuthenticateAsync(AccountBox.Text.Trim(), password, CancellationToken.None);
+            var login = await authenticator.AuthenticateAsync(AccountBox.Text.Trim(), password, LocalAdminLogin.IsChecked == true, CancellationToken.None);
+            var identity = login.Identity;
             if (faulted || epoch != authenticationEpoch) return;
-            if (AdministratorAccess.IsAllowed(identity, settings.AdministratorStudentIds))
+            if (login.IsLocalAdministrator || AdministratorAccess.IsAllowed(identity, settings.AdministratorStudentIds))
             {
                 audit.Record(null, "admin_view_opened");
                 AccountBox.Clear(); OrganizationBox.Clear();
                 adminMouse ??= new MouseMonitor(authDesktop);
                 adminMouse.Resume();
-                adminWindow = new AdminWindow(kioskMode: true, administratorName: identity.Name + " / " + identity.StudentId) { Owner = this };
+                adminWindow = new AdminWindow(kioskMode: true, administratorName: login.IsLocalAdministrator ? "本地管理员 / " + identity.Name : identity.Name + " / " + identity.StudentId) { Owner = this };
+                var adminToast = new SessionBannerWindow(toastOnly: true);
+                adminToast.Update(new BannerState(identity.Name, login.IsLocalAdministrator ? "本地管理员" : identity.StudentId, Stopwatch.GetTimestamp(), true));
                 try { adminWindow.ShowDialog(); }
                 finally
                 {
+                    adminToast.Close();
                     adminWindow = null; adminMouse.Pause();
+                    LocalAdminLogin.IsChecked = false;
                     audit.Record(null, "admin_view_closed");
                     StatusLabel.Text = "管理员已退出，请重新认证。";
                 }
@@ -119,20 +138,22 @@ public partial class LoginWindow : Window
                 StatusLabel.Text = "上次工程仍在保留中，请原操作人认证后保存并关闭 Studio，或联系管理员。";
                 return;
             }
+            EnsureStudioPreloaded();
+            if (studioBanner is null) throw new InvalidOperationException("使用者信息栏未准备就绪。");
+            await studioBanner.WaitReadyAsync();
+            if (faulted || epoch != authenticationEpoch) return;
+            var resuming = session.RetainedOwner is not null;
             session.Enter(identity, organization);
+            await studioBanner.ShowAsync(identity, Stopwatch.GetTimestamp());
+            if (faulted || epoch != authenticationEpoch) return;
             if (!Native.SwitchDesktop(studioDesktop)) throw new InvalidOperationException("无法进入打印桌面。");
             captureCancellation?.Dispose();
             captureCancellation = new CancellationTokenSource();
             await recorder.StartAsync(session.SessionId!, captureCancellation.Token);
             if (faulted || epoch != authenticationEpoch) return;
             audit.Record(session.SessionId, "recording_started");
-            if (studio is null || studio.HasExited)
-            {
-                studio?.Dispose();
-                studio = Native.StartOnDesktop(settings.StudioPath, studioDesktopName);
-                audit.Record(session.SessionId, "studio_started");
-            }
-            else audit.Record(session.SessionId, "studio_resumed");
+            if (studio is null || studio.HasExited) throw new InvalidOperationException("预启动的 Bambu 已退出。");
+            audit.Record(session.SessionId, resuming ? "studio_resumed" : "studio_preloaded_opened");
             mouse!.Resume();
             AccountBox.Clear();
             OrganizationBox.Clear();
@@ -176,13 +197,24 @@ public partial class LoginWindow : Window
             Native.SwitchDesktop(authDesktop);
             if (studio is not null && studio.HasExited)
             {
+                if (!faulted && Environment.TickCount64 - studioLaunchedAt < 5000)
+                {
+                    Fault("Bambu 预启动后立即退出，请管理员检查软件配置。");
+                    return;
+                }
                 try { session?.Lock("studio_closed_while_locked", false); }
                 catch { Fault("日志写入失败，请联系管理员。"); }
                 studio.Dispose(); studio = null;
             }
+            if (!faulted && !busy && !recordingStopping)
+            {
+                try { EnsureStudioPreloaded(); }
+                catch { Fault("无法提前启动 Bambu，请管理员检查软件路径和运行权限。"); }
+            }
             return;
         }
-        if (busy) return; // Waiting for the encoder's first frame before launching Studio.
+        if (busy) return; // The prestarted Studio is ready; wait for recording startup to finish.
+        if (studioBanner?.Healthy != true) { Fault("使用者信息栏已退出，请管理员重新启动会话。"); return; }
         if (recorder is null || !recorder.Healthy) { Fault("录屏中断，已锁定。请管理员检查录屏组件或磁盘。"); return; }
         if (studio is null || studio.HasExited) ReturnToAuthentication("studio_closed");
         else if (mouse!.Failed) ReturnToAuthentication("input_desktop_unavailable");
@@ -193,6 +225,7 @@ public partial class LoginWindow : Window
     private async void ReturnToAuthentication(string reason)
     {
         authenticationEpoch++;
+        studioBanner?.Hide();
         adminWindow?.Close();
         adminMouse?.Pause();
         captureCancellation?.Cancel();
@@ -202,13 +235,16 @@ public partial class LoginWindow : Window
         PasswordInput.Clear();
         AccountBox.Clear();
         OrganizationBox.Clear();
+        LocalAdminLogin.IsChecked = false;
         mouse?.Pause();
         var switched = Native.SwitchDesktop(authDesktop); // Hide access before writing logs.
         if (!switched) Native.LockWorkStation();
         var recordingSession = session?.SessionId;
         try
         {
-            session?.Lock(reason, studio is not null && !studio.HasExited);
+            var forceCloseStudio = reason == "mouse_idle_timeout";
+            if (forceCloseStudio) ForceCloseStudioForIdleTimeout(recordingSession);
+            session?.Lock(reason, !forceCloseStudio && studio is not null && !studio.HasExited);
             if (!faulted) StatusLabel.Text = "已锁定，正在保存录像…";
             if (recorder is not null) await recorder.StopAsync();
             if (recordingSession is not null) audit?.Record(recordingSession, "recording_stopped");
@@ -223,21 +259,109 @@ public partial class LoginWindow : Window
             // Even a log failure must not leave capture running indefinitely.
             try { if (recorder is not null) await recorder.StopAsync("interrupted"); } catch { Native.LockWorkStation(); }
         }
-        finally { recordingStopping = false; SetAuthenticationInputs(); }
+        finally
+        {
+            recordingStopping = false;
+            if (!faulted && !startupProbe)
+            {
+                try { EnsureStudioPreloaded(); }
+                catch { faulted = true; StatusLabel.Text = "无法提前启动 Bambu，请管理员检查软件配置。"; }
+            }
+            SetAuthenticationInputs();
+        }
+    }
+
+    private void ForceCloseStudioForIdleTimeout(string? recordingSession)
+    {
+        if (studio is null) return;
+        try
+        {
+            if (!studio.HasExited)
+            {
+                // The user has already lost access to the Studio desktop. End the whole
+                // Bambu process tree before the next prelaunch, so a stuck project cannot
+                // be inherited by the next authenticated user.
+                studio.Kill(entireProcessTree: true);
+                if (!studio.WaitForExit(10000))
+                    throw new TimeoutException("Bambu did not exit after the idle timeout.");
+            }
+            audit?.Record(recordingSession, "studio_forced_closed_timeout");
+            studio.Dispose();
+            studio = null;
+        }
+        catch (Exception error)
+        {
+            StartupDiagnostics.Write("studio-force-close-failed", error);
+            throw new InvalidOperationException("超时后无法关闭 Bambu，已停止后续使用，请管理员检查。", error);
+        }
+    }
+
+    private void EnsureStudioPreloaded()
+    {
+        if (startupProbe || faulted || settings is null) return;
+        if (studio is not null && !studio.HasExited) return;
+        // Never replace an existing user's unsaved project. A closed Studio is prestarted
+        // on its hidden desktop while the next user is still on the authentication page.
+        studio?.Dispose();
+        studio = Native.StartOnDesktop(settings.StudioPath, studioDesktopName);
+        studioLaunchedAt = Environment.TickCount64;
+        audit?.Record(null, "studio_prestarted");
     }
 
     private void Fault(string message)
     {
         authenticationEpoch++;
         faulted = true;
-        ReturnToAuthentication("application_fault");
+        if (!startupProbe) ReturnToAuthentication("application_fault");
         StatusLabel.Text = message;
+    }
+
+    private void OrganizationFocused(object sender, KeyboardFocusChangedEventArgs e) => ApplyOrganizationInputLanguage();
+
+    private void ApplyOrganizationInputLanguage()
+    {
+        try
+        {
+            var manager = InputLanguageManager.Current;
+            var language = manager.AvailableInputLanguages.Cast<CultureInfo>()
+                .FirstOrDefault(x => x.Name == "zh-CN")
+                ?? manager.AvailableInputLanguages.Cast<CultureInfo>().FirstOrDefault(x => x.TwoLetterISOLanguageName == "zh");
+            if (language is null)
+            {
+                StatusLabel.Text = "当前 Windows 账户没有可用的中文输入法，请管理员添加微软拼音。";
+                return;
+            }
+            if (language is not null)
+            {
+                InputLanguageManager.SetInputLanguage(OrganizationBox, language);
+                manager.CurrentInputLanguage = language;
+            }
+            InputMethod.SetIsInputMethodEnabled(OrganizationBox, true);
+            InputMethod.SetPreferredImeState(OrganizationBox, InputMethodState.On);
+            InputMethod.SetPreferredImeConversionMode(OrganizationBox, ImeConversionModeValues.Native);
+            InputMethod.Current.ImeState = InputMethodState.On;
+            InputMethod.Current.ImeConversionMode = ImeConversionModeValues.Native;
+        }
+        catch (Exception error)
+        {
+            StartupDiagnostics.Write("organization-input-switch-failed", error);
+            StatusLabel.Text = "输入法切换失败，请尝试 Shift 或 Ctrl+空格，或联系管理员。";
+        }
     }
 
     private void SetAuthenticationInputs()
     {
         var enabled = !faulted && !busy && !recordingStopping && recorder?.HasProcess != true && session?.IsAuthorized != true;
-        LoginButton.IsEnabled = AccountBox.IsEnabled = PasswordInput.IsEnabled = OrganizationBox.IsEnabled = enabled;
+        LoginButton.IsEnabled = AccountBox.IsEnabled = PasswordInput.IsEnabled = LocalAdminLogin.IsEnabled = enabled;
+        OrganizationBox.IsEnabled = enabled && LocalAdminLogin.IsChecked != true;
+    }
+
+    private void AdministratorModeChanged(object sender, RoutedEventArgs e)
+    {
+        PasswordInput.Clear();
+        AccountBox.Tag = LocalAdminLogin.IsChecked == true ? "本地管理员用户名" : "学号 / 统一认证账号";
+        if (LocalAdminLogin.IsChecked == true) OrganizationBox.Clear();
+        SetAuthenticationInputs();
     }
 
     private async void CleanupRecordings()

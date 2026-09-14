@@ -1,6 +1,10 @@
 **/bin/
 **/obj/
 artifacts/
+.tools/
 .vs/
 *.user
 *.db*
+.DS_Store
+**/local-admin.json
+**/local-admin.json.*.tmp

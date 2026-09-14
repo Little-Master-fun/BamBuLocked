@@ -17,6 +17,25 @@ public sealed class AdminTests : IDisposable
         Assert.False(File.Exists(Db));
     }
     [Fact]
+    public void ExactInstantMatchesContainingIntervalAndNotLaterInSameSecond()
+    {
+        var store = new AuditStore(Db);
+        var a = store.Begin(new("001","Alice"),"pc","Lab");
+        var b = store.Begin(new("002","Bob"),"pc","Lab");
+        var t = new DateTimeOffset(2026,9,1,14,30,0,TimeSpan.Zero);
+        using var connection = new SqliteConnection("Data Source="+Db+";Pooling=False"); connection.Open();
+        using var cmd = connection.CreateCommand();
+        cmd.CommandText = "UPDATE sessions SET started_at=CASE WHEN session_id=$id THEN $early ELSE $later END,ended_at=$end";
+        cmd.Parameters.AddWithValue("$id",a); cmd.Parameters.AddWithValue("$early",t.AddMinutes(-30).ToString("O"));
+        cmd.Parameters.AddWithValue("$later",t.AddMilliseconds(500).ToString("O")); cmd.Parameters.AddWithValue("$end",t.AddMinutes(30).ToString("O")); cmd.ExecuteNonQuery();
+        var reader = new AuditReader(Db); var query = new AuditFilter(At:t);
+        Assert.Equal(a,Assert.Single(reader.Query(query).Rows).SessionId);
+        Assert.Equal(2,reader.Query(query with { At=t.AddMinutes(30) }).Summary.Sessions);
+        Assert.Empty(reader.Query(query with { At=t.AddMinutes(30).AddTicks(1) }).Rows);
+        Assert.Equal("001",Assert.Single(reader.People(query).Rows).StudentId);
+        using var writer = new StringWriter(); Assert.Equal(1,reader.Export(query,writer)); Assert.DoesNotContain(b,writer.ToString());
+    }
+    [Fact]
     public void PeopleCountsGroupByExactIdAndDrillDownKeepsFilters()
     {
         var store = new AuditStore(Db);
@@ -39,7 +58,7 @@ public sealed class AdminTests : IDisposable
         var a = store.Begin(new("001","Alice"),"pc","Lab");
         var b = store.Begin(new("002","Bob"),"pc","Lab");
         var t = new DateTimeOffset(2026,9,1,14,0,0,TimeSpan.Zero);
-        using var connection = new SqliteConnection("Data Source="+Db); connection.Open();
+        using var connection = new SqliteConnection("Data Source="+Db+";Pooling=False"); connection.Open();
         using var cmd = connection.CreateCommand();
         cmd.CommandText = "UPDATE sessions SET started_at=CASE WHEN session_id=$id THEN $early ELSE $late END,ended_at=$end";
         cmd.Parameters.AddWithValue("$id",a); cmd.Parameters.AddWithValue("$early",t.ToString("O"));
@@ -78,7 +97,7 @@ public sealed class AdminTests : IDisposable
         var first = store.Begin(new("001", "Alice"), "printer", "=FORMULA");
         var second = store.Begin(new("002", "Bob"), "printer", "Design");
         var t = new DateTimeOffset(2026,9,1,0,0,0,TimeSpan.Zero);
-        using var connection = new SqliteConnection("Data Source=" + Db); connection.Open();
+        using var connection = new SqliteConnection("Data Source=" + Db + ";Pooling=False"); connection.Open();
         using var cmd = connection.CreateCommand();
         cmd.CommandText = "UPDATE sessions SET started_at=CASE WHEN session_id=$id THEN $first ELSE $second END";
         cmd.Parameters.AddWithValue("$id",first); cmd.Parameters.AddWithValue("$first",t.ToString("O")); cmd.Parameters.AddWithValue("$second",t.AddDays(1).ToString("O")); cmd.ExecuteNonQuery();
@@ -96,7 +115,7 @@ public sealed class AdminTests : IDisposable
     [Fact]
     public void LegacyDatabaseIsReadWithoutMigration()
     {
-        using var connection = new SqliteConnection("Data Source=" + Db); connection.Open();
+        using var connection = new SqliteConnection("Data Source=" + Db + ";Pooling=False"); connection.Open();
         using var command = connection.CreateCommand();
         command.CommandText = "CREATE TABLE sessions(session_id TEXT,student_id TEXT,name TEXT,computer_id TEXT,started_at TEXT,ended_at TEXT,end_reason TEXT); CREATE TABLE events(id INTEGER,session_id TEXT,occurred_at TEXT,event_type TEXT); INSERT INTO sessions VALUES('a','001','Alice','pc','2026-09-01T00:00:00.0000000+00:00',NULL,NULL)";
         command.ExecuteNonQuery();

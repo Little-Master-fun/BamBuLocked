@@ -64,9 +64,10 @@
                                 <Rectangle Canvas.Left="5" Canvas.Top="5" Width="26" Height="31" RadiusX="2" RadiusY="2" Stroke="#95BEC3" StrokeThickness="3"/>
                                 <Path Stroke="#95BEC3" StrokeThickness="3" Data="M12,13 L15,13 M21,13 L24,13 M12,20 L15,20 M21,20 L24,20 M15,36 L15,28 L21,28 L21,36"/>
                             </Canvas></Viewbox>
-                            <TextBox x:Name="OrganizationBox" Grid.Column="1" Tag="所属组织（必填）" MaxLength="100" AutomationProperties.Name="所属组织，必填" ToolTip="例如：学院、实验室、社团或部门"/>
+                            <TextBox x:Name="OrganizationBox" Grid.Column="1" Tag="所属组织（必填）" MaxLength="100" AutomationProperties.Name="所属组织，必填" ToolTip="例如：学院、实验室、社团或部门" InputMethod.IsInputMethodEnabled="True" InputMethod.PreferredImeState="On" GotKeyboardFocus="OrganizationFocused"/>
                         </Grid>
                     </Border>
+                    <CheckBox x:Name="LocalAdminLogin" Content="本地管理员登录（无需填写组织）" Checked="AdministratorModeChanged" Unchecked="AdministratorModeChanged" HorizontalAlignment="Center" Foreground="#567B80" Margin="0,0,0,16"/>
                     <TextBlock Text="山东大学统一身份认证 · 打印工作站" Foreground="#6C9196" FontSize="13" HorizontalAlignment="Center" Margin="0,0,0,22"/>
                     <Button x:Name="LoginButton" Style="{StaticResource LoginAction}" Content="登录" IsDefault="True" Click="LoginClicked" HorizontalAlignment="Center"/>
                     <TextBlock x:Name="StatusLabel" Text="等待认证" Foreground="#567B80" TextAlignment="Center" TextWrapping="Wrap" Margin="0,14,0,0" MinHeight="36"/>

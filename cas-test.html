@@ -1,0 +1,216 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <title>山东大学 CAS 接口测试</title>
+  <style>
+    *{box-sizing:border-box}body{margin:0;background:#f3f6fa;color:#182b43;font:15px/1.65 system-ui,"Microsoft YaHei",sans-serif}
+    main{max-width:880px;margin:40px auto;padding:0 20px}h1{font-size:27px;margin:0 0 6px}h2{font-size:18px;margin:0 0 14px}
+    .sub{color:#627086;margin:0 0 24px}.card{background:white;border:1px solid #dce3ed;border-radius:14px;padding:22px;margin:16px 0}
+    .notice{background:#fff7e4;border:1px solid #f0d99f;border-radius:10px;padding:14px;color:#654b16}.notice p{margin:0 0 6px}.notice p:last-child{margin:0}
+    label{display:block;margin:12px 0 4px;font-weight:600}input,select{width:100%;padding:10px 12px;border:1px solid #bac7d7;border-radius:7px;font:inherit;background:white}
+    .row{display:grid;grid-template-columns:1fr 1fr;gap:18px}.actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:18px}
+    button{padding:10px 15px;border:1px solid #c4d0df;border-radius:8px;background:#fff;color:#234366;font:inherit;cursor:pointer}button.primary{background:#205dc4;color:#fff;border-color:#205dc4}button:disabled{opacity:.5;cursor:wait}
+    a{color:#205dc4}small{display:block;color:#637087}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#102137;color:#e7effa;border-radius:10px;padding:18px;min-height:130px;font:13px/1.8 ui-monospace,Consolas,monospace}code{overflow-wrap:anywhere}
+    #state{font-weight:600;color:#205dc4}footer{color:#637087;font-size:13px;margin:20px 0 40px}@media(max-width:600px){main{margin:22px auto}.row{grid-template-columns:1fr;gap:0}.card{padding:17px}}
+  </style>
+</head>
+<body>
+<main>
+  <h1>山东大学 CAS 接口测试</h1>
+  <p class="sub">在校园网和校外网络分别运行，保存结果进行对比。</p>
+  <div class="notice">
+    <p id="mode"><strong>建议使用本地代理：</strong>运行 scripts/Start-CasTest.ps1 后打开 http://127.0.0.1:18765/，与参考项目的 /aut 代理方式一致。</p>
+    <p><strong>浏览器跨域限制会影响结果。</strong>双击本文件后，请求可能被 CORS 拦截；即使通过 localhost 打开，也仍然属于跨域。</p>
+    <p>只有读到 HTTP 状态码，才能报告该状态。出现「Failed to fetch」不能直接判断接口失效或限制校园网；请求也可能已发送，但浏览器不允许读取响应。</p>
+    <p>浏览器自动发送自己的 User-Agent。本页不伪造该请求头，不使用无法读取结果的 no-cors 模式。</p>
+  </div>
+
+  <section class="card">
+    <h2>1. 页面与地址连通性（不发送账号密码）</h2>
+    <label for="network">当前网络</label>
+    <select id="network"><option>未注明</option><option>山东大学校园网</option><option>校外网络</option></select>
+    <div class="actions">
+      <button type="button" data-path="login">GET /cas/login</button>
+      <button type="button" data-path="restlet/tickets">GET /cas/restlet/tickets</button>
+      <button type="button" data-path="v1/tickets">GET /cas/v1/tickets</button>
+      <a href="https://pass.sdu.edu.cn/cas/login" target="_blank" rel="noopener noreferrer">直接打开学校登录页 ↗</a>
+    </div>
+    <small>GET 检查不是登录测试；例如 405 可能只是该地址不支持 GET。直接打开网页也不能证明 REST 登录接口可用。</small>
+  </section>
+
+  <section class="card">
+    <h2>2. 测试程序使用的完整认证流程</h2>
+    <form id="login-form" autocomplete="off">
+      <div class="row">
+        <div><label for="account">学号 / 账号</label><input id="account" required maxlength="64" autocomplete="off" spellcheck="false"></div>
+        <div><label for="password">密码</label><input id="password" type="password" required autocomplete="off"></div>
+      </div>
+      <label for="service">Service 地址</label>
+      <input id="service" type="url" required value="https://service.sdu.edu.cn/tp_up/view?m=up" spellcheck="false">
+      <label for="st-format">第二步 ST 请求格式（用于对比）</label>
+      <select id="st-format"><option value="reference">参考项目 / 新版程序：text/plain，原始 service 字符串</option><option value="form">旧版程序：application/x-www-form-urlencoded，编码后的 service</option></select>
+      <small>凭据仅发送至 https://pass.sdu.edu.cn/cas/restlet/tickets。密码不会写入本页日志、文件或浏览器存储。</small>
+      <div class="actions"><button class="primary" type="submit">运行一次认证测试</button></div>
+    </form>
+    <small>流程：POST 获取 TGT → POST 获取 ST → GET 验证身份 → DELETE 尝试注销 TGT。不重试、不打开其他学校业务系统。</small>
+  </section>
+
+  <section class="card" aria-live="polite">
+    <h2>测试结果</h2>
+    <div id="state">尚未测试</div>
+    <pre id="log">等待开始。日志不显示密码、票据或原始认证响应。</pre>
+    <div class="actions"><button id="save" type="button">下载结果 TXT</button><button id="clear" type="button">清空结果</button></div>
+  </section>
+  <footer>本文件不加载外部脚本。若被跨域拦截：按 F12 查看 Console / Network 中是否明确出现 CORS 错误。不要分享包含密码、请求表单或票据的网络请求截图。</footer>
+</main>
+<script>
+'use strict';
+const BASE = 'https://pass.sdu.edu.cn/cas/';
+const $ = id => document.getElementById(id);
+const viaProxy = location.origin === 'http://127.0.0.1:18765';
+if (viaProxy) $('mode').textContent = '当前使用本地 /aut 代理：浏览器只访问本机，由本机转发至学校；保留 HTTPS 证书校验。下方跨域说明仅适用于直接打开文件的模式。';
+let busy = false, lines = [];
+function log(message) {
+  lines.push(new Date().toLocaleTimeString() + '  ' + message);
+  $('log').textContent = lines.join('\n');
+}
+function begin(label) {
+  if (busy) return false;
+  busy = true;
+  document.querySelectorAll('button,input,select').forEach(el => el.disabled = true);
+  $('state').textContent = label;
+  log('--- ' + label + ' | 网络：' + $('network').value + ' | 模式：' + (viaProxy ? '本地代理' : '直接跨域') + ' ---');
+  return true;
+}
+function finish(state) {
+  busy = false;
+  document.querySelectorAll('button,input,select').forEach(el => el.disabled = false);
+  $('state').textContent = state;
+}
+function failure(error) {
+  if (error.name === 'AbortError') log('请求超过 15 秒，已停止等待。超时不能单独证明校园网限制。');
+  else if (error instanceof TypeError) log('浏览器未提供可读响应：可能是 CORS、网络、DNS、TLS 或连接被关闭。请检查 F12；此结果不能判断账号密码是否正确。');
+  else log(error.message);
+}
+async function request(label, url, options = {}) {
+  // Every actual network request remains on the school authentication origin/path.
+  const target = new URL(url);
+  if (target.origin !== new URL(BASE).origin || !target.pathname.startsWith('/cas/')) throw new Error('已拒绝非学校认证地址。');
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 15000);
+  const started = performance.now();
+  log(label + '：发送请求…');
+  try {
+    const requestUrl = viaProxy ? '/aut/' + target.pathname.slice('/cas/'.length) + target.search : target.href;
+    const response = await fetch(requestUrl, {...options, signal:controller.signal, credentials:'omit', redirect:'error', referrerPolicy:'no-referrer'});
+    if (response.headers.get('X-CAS-Proxy-Error')) {
+      const detail = await response.text();
+      throw new Error(detail + '（这是本地代理错误，不是学校返回 HTTP 502。）');
+    }
+    log(label + '：HTTP ' + response.status + '，' + Math.round(performance.now()-started) + ' ms');
+    const body = await response.text();
+    if (body.length > 131072) throw new Error('响应过大，已停止解析。');
+    return {response, body};
+  } finally { clearTimeout(timer); }
+}
+function requireSuccess(response, stage) {
+  if (response.ok) return;
+  if ([400,401,403].includes(response.status)) throw new Error(stage + '被服务器拒绝；仅凭状态码不能区分凭据错误、访问策略或参数错误。');
+  throw new Error(stage + '未成功，请参考上方 HTTP 状态。');
+}
+function ticket(body, prefix) {
+  const value = body.trim();
+  return value.startsWith(prefix) && value.length <= 4096 && !/\s/.test(value) ? value : null;
+}
+document.querySelectorAll('[data-path]').forEach(button => button.addEventListener('click', async () => {
+  if (!begin('检查 ' + button.dataset.path)) return;
+  let state = '地址检查完成';
+  try { await request('GET /cas/' + button.dataset.path, BASE + button.dataset.path); }
+  catch (error) { failure(error); state = '未取得可判断的结果'; }
+  finally { finish(state); }
+}));
+$('login-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  const account = $('account').value.trim();
+  let password = $('password').value;
+  const service = $('service').value.trim();
+  const referenceFormat = $('st-format').value === 'reference';
+  if (!account || !password) { $('state').textContent = '请填写账号和密码'; return; }
+  try { if (new URL(service).protocol !== 'https:') throw new Error(); }
+  catch { $('state').textContent = 'Service 必须是有效的 HTTPS 地址'; return; }
+  if (!begin('完整认证测试')) return;
+  $('password').value = '';
+  let tgt = null, state = '认证未完成';
+  try {
+    const form = new URLSearchParams({username:account, password});
+    password = '';
+    let first;
+    try { first = await request('1. POST 获取 TGT', BASE + 'restlet/tickets', {method:'POST',body:form}); }
+    finally { form.delete('password'); }
+    requireSuccess(first.response, '获取 TGT');
+    tgt = ticket(first.body, 'TGT-');
+    if (!tgt) {
+      // Some CAS servers return the ticket in Location. Browsers can read this only
+      // when the server explicitly exposes that header through CORS.
+      const header = first.response.headers.get('Location');
+      if (header) {
+        const destination = new URL(header, BASE + 'restlet/tickets');
+        const pathPrefix = '/cas/restlet/tickets/';
+        if (destination.origin === new URL(BASE).origin && destination.pathname.startsWith(pathPrefix))
+          tgt = ticket(decodeURIComponent(destination.pathname.slice(pathPrefix.length)), 'TGT-');
+      }
+      if (tgt) log('TGT 位于 Location 响应头；与当前程序要求的正文票据格式不同。');
+    }
+    if (!tgt) throw new Error('请求成功，但没有取得可读的 TGT。可能是返回格式不兼容，或 Location 响应头未获 CORS 开放。');
+    log('TGT 已取得（隐藏内容）。');
+    log('第二步格式：' + (referenceFormat ? '参考项目 text/plain' : '旧版程序表单编码'));
+    const second = await request('2. POST 获取 ST', BASE + 'restlet/tickets/' + encodeURIComponent(tgt), referenceFormat
+      ? {method:'POST',headers:{'Content-Type':'text/plain'},body:'service='+service}
+      : {method:'POST',body:new URLSearchParams({service})});
+    requireSuccess(second.response, '获取 ST');
+    const st = ticket(second.body, 'ST-');
+    if (!st) throw new Error('未取得程序支持的 ST 票据格式。');
+    log('ST 已取得（隐藏内容）。');
+    const third = await request('3. GET 验证身份', BASE + 'serviceValidate?' + new URLSearchParams({ticket:st,service}));
+    requireSuccess(third.response, '验证身份');
+    const xml = new DOMParser().parseFromString(third.body, 'application/xml');
+    const ns = 'http://www.yale.edu/tp/cas';
+    const root = xml.documentElement;
+    if (xml.getElementsByTagName('parsererror').length || root.namespaceURI !== ns || root.localName !== 'serviceResponse') throw new Error('校验响应不是预期 CAS XML。');
+    const direct = (element, name) => [...element.children].filter(node => node.namespaceURI === ns && node.localName === name);
+    const successes = direct(root, 'authenticationSuccess');
+    if (direct(root,'authenticationFailure').length || successes.length !== 1) throw new Error('服务器未返回唯一的认证成功结果。');
+    const ids = direct(successes[0], 'user');
+    const names = successes[0].getElementsByTagNameNS(ns, 'USER_NAME');
+    const id = ids.length === 1 ? ids[0].textContent.trim() : '';
+    const name = names.length === 1 ? names[0].textContent.trim() : '';
+    if (!id || id.length > 64 || !name || name.length > 128 || /[\x00-\x1f\x7f-\x9f]/.test(id+name)) throw new Error('服务器响应缺少程序要求的唯一有效学号或姓名。');
+    log('认证成功：已取得有效学号和姓名（不记录具体身份）。');
+    log('服务器返回账号与输入账号' + (id === account ? '一致。' : '不同；可能使用了账号别名，需核对。'));
+    state = '完整认证流程成功';
+  } catch (error) { failure(error); }
+  finally {
+    password = '';
+    if (tgt) {
+      try {
+        const cleanup = await request('4. DELETE 注销 TGT', BASE + 'restlet/tickets/' + encodeURIComponent(tgt), {method:'DELETE'});
+        log(cleanup.response.ok ? '票据注销成功。' : '票据注销未确认成功。');
+      } catch (error) { log('注销请求未确认成功（DELETE 也可能被跨域预检拦截）。'); failure(error); }
+      tgt = null;
+    } else log('没有取得可读取的 TGT，无法主动注销未知票据。');
+    finish(state);
+  }
+});
+$('clear').addEventListener('click', () => { lines=[]; $('log').textContent='结果已清空。'; $('state').textContent='尚未测试'; });
+$('save').addEventListener('click', () => {
+  const blob = new Blob(['山东大学 CAS 浏览器测试\n时间：'+new Date().toISOString()+'\n'+lines.join('\n')+'\n'], {type:'text/plain;charset=utf-8'});
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a'); link.href=url; link.download='cas-test-results.txt'; link.click();
+  setTimeout(() => URL.revokeObjectURL(url),1000);
+});
+</script>
+</body>
+</html>

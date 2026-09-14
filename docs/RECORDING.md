@@ -4,7 +4,7 @@
 
 ## 准备录屏组件
 
-运行包不内置 FFmpeg。在 Windows 解压后、部署工作站前执行：
+`PrintGate-win-x64-offline.zip` 离线完整包已内置 Windows x64 FFmpeg，解压后可直接部署，**不要重复运行 Install-Recorder.ps1**。源码自行发布或旧精简包若缺少 `app/Tools/ffmpeg.exe`，则在部署前联网执行：
 
 ```powershell
 .\scripts\Install-Recorder.ps1 -PackagePath .\app

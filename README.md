@@ -18,7 +18,7 @@ Windows 10 专业版专用打印电脑的第一版实现。山东大学统一认
 - 日志失败时拒绝开放；退出会话先撤销授权，再写结束日志。
 - 管理员部署/恢复脚本、自定义用户界面配置、AppLocker 审计策略生成器。
 - 管理员可视化页面：使用次数/人数、未结束及异常统计，按身份/组织/日期筛选、会话详情、关联录像、系统事件及 CSV 导出。使用独立 Windows 管理员身份打开，见 [管理页面说明](docs/ADMIN.md)。
-- 使用人员按学号汇总频次，点击进入个人全部历史及录像；时间可精确到秒，并弹出对应时段记录，支持跨时段会话查询。
+- 使用人员按学号汇总频次，点击进入个人全部历史及录像；输入单个日期和具体时刻，即可弹出包含该时刻的使用区间，列表显示起止时间。
 - 在 `AdministratorStudentIds` 配置校园管理员学号后，原登录页认证成功即进入记录页面；关闭、鼠标超时或 Windows 锁定后回到认证页。默认空名单不开放校园管理入口。
 
 ## 快速构建
@@ -40,6 +40,8 @@ dotnet publish src/PrintGate.Windows/PrintGate.Windows.csproj -c Release -r win-
 
 运行包为 `artifacts/win-x64/`，需复制**整个文件夹**，不能只复制 exe。包自带 .NET 运行时；WPF 界面及 Win32 桌面 API 只能在 Windows 运行。
 
+离线完整包 `PrintGate-win-x64-offline.zip` 已包含 Windows FFmpeg 及其许可证、来源和校验信息。该包无需在目标电脑下载录屏组件；校园登录仍需网络。
+
 ## 首次 Windows 测试
 
 1. 保留一个可用的独立管理员账户。创建专用的非管理员本地账户，先登录一次生成用户目录，再注销。
@@ -60,6 +62,8 @@ dotnet publish src/PrintGate.Windows/PrintGate.Windows.csproj -c Release -r win-
 
 ## 配置
 
+自定义管理员用户名和密码：使用新版包中的 `scripts/Set-LocalAdministrator.ps1` 打开设置窗口，详见 [本地管理员说明](docs/LOCAL-ADMIN.md)。登录页选择“本地管理员登录”后验证本机账号，不使用校园密码。
+
 | 配置项 | 含义 |
 |---|---|
 | `StudioPath` | 管理员安装的官方 Studio exe 绝对路径 |
@@ -68,7 +72,7 @@ dotnet publish src/PrintGate.Windows/PrintGate.Windows.csproj -c Release -r win-
 | `CasBaseUrl` | 默认 `https://pass.sdu.edu.cn/cas/`，末尾必须有 `/` |
 | `CasService` | 示例中的学校门户服务地址；正式接入需要学校确认 |
 | `RecordingsDirectory` | 本地专用录像目录，可改为 D 盘等指定地点 |
-| `FfmpegPath` | 编码器路径，默认 Tools\ffmpeg.exe，需先安装 |
+| `FfmpegPath` | 编码器路径，默认 Tools\ffmpeg.exe；离线完整包已内置，自行发布需安装 |
 | `RecordingRetentionDays` | 7 天；磁盘不足时可提前删除最早录像 |
 | `RecordingMinimumFreeSpaceMb` | 默认预留 1024 MB，低于此值开始清理 |
 | `RequestTimeoutSeconds` | 每次 HTTP 请求的超时，默认 15 秒 |

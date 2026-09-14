@@ -8,6 +8,18 @@ namespace PrintGate.Windows;
 
 internal static class Native
 {
+    [DllImport("kernel32.dll")] private static extern uint GetCurrentThreadId();
+    [DllImport("user32.dll")] private static extern IntPtr GetThreadDesktop(uint threadId);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern bool GetUserObjectInformationW(IntPtr handle, int index, StringBuilder information, uint length, out uint needed);
+
+    internal static string CurrentDesktopName()
+    {
+        var name = new StringBuilder(256);
+        if (!GetUserObjectInformationW(GetThreadDesktop(GetCurrentThreadId()), 2, name, 512, out _))
+            throw new Win32Exception(Marshal.GetLastWin32Error());
+        return name.ToString();
+    }
     [StructLayout(LayoutKind.Sequential)] internal struct Point { public int X; public int Y; }
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
     private struct StartupInfo
@@ -47,7 +59,14 @@ internal static class Native
         if (!CreateProcessW(executable, new StringBuilder($"\"{executable}\" {arguments}"), IntPtr.Zero,
             IntPtr.Zero, false, 0, IntPtr.Zero, Path.GetDirectoryName(executable)!, ref startup, out var info))
             throw new Win32Exception(Marshal.GetLastWin32Error());
-        try { return Process.GetProcessById((int)info.processId); }
+        try
+        {
+            var process = Process.GetProcessById((int)info.processId);
+            // Keep a process handle while the native creation handle is still open.
+            // Otherwise a short-lived probe can disappear before ExitCode is queried.
+            try { _ = process.Handle; return process; }
+            catch { process.Dispose(); throw; }
+        }
         finally { CloseHandle(info.process); CloseHandle(info.thread); }
     }
 

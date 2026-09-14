@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Security.Principal;
 using System.Text;
 using System.Text.Json;
@@ -16,11 +15,12 @@ public partial class AdminWindow : Window
 {
     private readonly AuditReader reader;
     private readonly bool kioskMode;
-    private readonly string? administratorName;
     private readonly string recordingDirectory;
     private readonly DispatcherTimer refreshTimer;
     private AuditFilter filter = new();
     private SessionView view = SessionView.All;
+    private enum Section { Records, People, Events }
+    private Section section;
     private int page = 1, generation;
     private long total;
     private bool loading, exporting;
@@ -29,141 +29,146 @@ public partial class AdminWindow : Window
     public AdminWindow(AuditFilter? initialFilter = null, bool kioskMode = false, string? administratorName = null)
     {
         InitializeComponent();
-        this.kioskMode = kioskMode; this.administratorName = administratorName;
-        if (kioskMode)
-        {
-            WindowState = WindowState.Maximized;
-            WindowStyle = WindowStyle.None;
-            ResizeMode = ResizeMode.NoResize;
-            ExportButton.Visibility = Visibility.Collapsed;
-        }
+        this.kioskMode = kioskMode;
+        if (kioskMode) { WindowState = WindowState.Maximized; WindowStyle = WindowStyle.None; ResizeMode = ResizeMode.NoResize; }
         AdminIdentity.Text = administratorName ?? WindowsIdentity.GetCurrent().Name;
-        // Reading records must not require Studio or FFmpeg to be installed/running.
         var config = JsonSerializer.Deserialize<Settings>(File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "appsettings.json"))) ?? new Settings();
         if (!Path.IsPathFullyQualified(config.RecordingsDirectory)) throw new InvalidOperationException("录像目录配置无效。");
         recordingDirectory = config.RecordingsDirectory;
         reader = new AuditReader(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "PrintGate", "Data", "audit.db"));
-        filter = initialFilter ?? new(Overlap: true);
-        view = filter.View;
-        SearchBox.Text = filter.Keyword;
-        FromDate.SelectedDate = filter.From?.LocalDateTime.Date;
-        FromTime.Text = filter.From?.LocalDateTime.ToString("HH:mm:ss") ?? "00:00:00";
-        UntilDate.SelectedDate = filter.Until?.AddSeconds(-1).LocalDateTime.Date;
-        UntilTime.Text = filter.Until?.AddSeconds(-1).LocalDateTime.ToString("HH:mm:ss") ?? "23:59:59";
-        OverlapCheck.IsChecked = filter.Overlap;
-        if (filter.StudentId is not null) Title = "使用记录与录像 · 学号 " + filter.StudentId;
+        filter = initialFilter ?? new(); view = filter.View;
+        SyncInputs(); UpdateNavigation();
         refreshTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(15) };
-        refreshTimer.Tick += async (_, _) => { if (AutoRefresh.IsChecked == true && !loading && !exporting) await RefreshAsync(); };
+        refreshTimer.Tick += async (_, _) => { if (AutoRefresh.IsChecked == true && !loading && !exporting && OwnedWindows.Count == 0) await RefreshAsync(); };
         Loaded += async (_, _) => { refreshTimer.Start(); await RefreshAsync(); };
         Closed += (_, _) => { generation++; refreshTimer.Stop(); };
     }
-
+    private void SyncInputs()
+    {
+        SearchBox.Text = filter.Keyword;
+        FromDate.SelectedDate = filter.At?.LocalDateTime.Date;
+        FromTime.Text = filter.At?.LocalDateTime.ToString("HH:mm:ss") ?? "00:00:00";
+    }
     private AuditFilter ReadFilter()
     {
-        static DateTimeOffset? Boundary(DateTime? date, string time, bool end)
+        DateTimeOffset? at = null;
+        if (FromDate.SelectedDate.HasValue)
         {
-            if (!date.HasValue) return null;
-            if (!TimeOnly.TryParseExact(time.Trim(), "HH:mm:ss", System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out var clock))
-                throw new ArgumentException("时间请输入 HH:mm:ss，例如 14:30:00。");
-            var local = DateTime.SpecifyKind(date.Value.Date + clock.ToTimeSpan(), DateTimeKind.Local);
-            return new DateTimeOffset(end ? local.AddSeconds(1) : local).ToUniversalTime();
+            if (!TimeOnly.TryParseExact(FromTime.Text.Trim(), "HH:mm:ss", System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out var clock))
+                throw new ArgumentException("时间格式不正确，请输入时:分:秒，例如 14:30:00。");
+            at = new DateTimeOffset(DateTime.SpecifyKind(FromDate.SelectedDate.Value.Date + clock.ToTimeSpan(), DateTimeKind.Local)).ToUniversalTime();
         }
-        var from = Boundary(FromDate.SelectedDate, FromTime.Text, false);
-        var until = Boundary(UntilDate.SelectedDate, UntilTime.Text, true);
-        if (from.HasValue && until.HasValue && from >= until) throw new ArgumentException("结束时间不能早于开始时间。");
-        return new(SearchBox.Text.Trim(), from, until, view, filter.StudentId, OverlapCheck.IsChecked == true);
+        return new(SearchBox.Text.Trim(), View: view, StudentId: filter.StudentId, At: at);
     }
-    private void PeopleClicked(object sender, RoutedEventArgs e)
+    private void UpdateNavigation()
     {
-        try { new PeopleWindow(reader, ReadFilter(), kioskMode, administratorName) { Owner = this }.ShowDialog(); }
-        catch (ArgumentException error) { StatusLabel.Text = error.Message; }
-    }
-    private void TimePopupClicked(object sender, RoutedEventArgs e)
-    {
-        try
+        static Visibility Visible(bool value) => value ? Visibility.Visible : Visibility.Collapsed;
+        SessionsGrid.Visibility = Visible(section == Section.Records);
+        PeopleGrid.Visibility = Visible(section == Section.People);
+        EventsGrid.Visibility = Visible(section == Section.Events);
+        RecordTabs.Visibility = Visible(section == Section.Records);
+        TableCaption.Visibility = Visible(section != Section.Records);
+        StatsPanel.Visibility = Visible(section != Section.Events);
+        KeywordPanel.Visibility = Visible(section != Section.Events);
+        Pagination.Visibility = Visible(section != Section.Events);
+        ExportButton.Visibility = Visible(!kioskMode && section == Section.Records);
+        PageTitle.Text = section switch { Section.People => "使用人员", Section.Events => "系统事件", _ => "操作记录" };
+        PageSubtitle.Text = section switch { Section.People => "按学号汇总使用频次，查看每个人的使用历史", Section.Events => "查看认证、录屏与工作站运行事件", _ => "查看每一次使用，以及对应的操作录像" };
+        TableCaption.Text = section == Section.People ? "人员按使用次数排序" : "按发生时间倒序 · 最多 500 条";
+        QueryButton.Content = section == Section.Events ? "查询事件" : section == Section.People ? "查询人员" : "查询记录";
+        ClearPersonButton.Visibility = Visible(filter.StudentId is not null);
+        FilterHint.Text = filter.StudentId is not null ? "当前人员：" + filter.StudentId + " · 可清除限定返回全部人员。" : section == Section.Events ? "不选日期查看全部时间；输入时刻查询该秒内的事件。" : "不选日期查看全部记录；输入一个时刻，查找当时所属的使用区间。";
+        foreach (var (button, target) in new[] { (RecordsNav, Section.Records), (PeopleNav, Section.People), (EventsNav, Section.Events) })
         {
-            var query = ReadFilter();
-            if (query.From is null || query.Until is null) throw new ArgumentException("请填写开始、结束日期与时间；查询某一秒时将两者设为相同时间。");
-            new AdminWindow(query, kioskMode, administratorName) { Owner = this, Title = "时间查询结果 · 使用记录与录像" }.ShowDialog();
+            button.Background = new SolidColorBrush(target == section ? Colors.White : Colors.Transparent);
+            button.Foreground = new SolidColorBrush(target == section ? Color.FromRgb(45,91,97) : Color.FromRgb(232,242,242));
         }
-        catch (ArgumentException error) { StatusLabel.Text = error.Message; }
+        foreach (var tab in new[] { AllTab, RecordingTab, UnfinishedTab, AbnormalTab })
+        {
+            var selected = (string)tab.Tag == view.ToString();
+            tab.Background = new SolidColorBrush(selected ? Color.FromRgb(232,242,240) : Colors.White);
+            tab.Foreground = new SolidColorBrush(selected ? Color.FromRgb(52,111,113) : Color.FromRgb(112,134,138));
+        }
     }
-
     private async Task RefreshAsync()
     {
-        var version = ++generation;
-        var selectedFilter = filter; var selectedPage = page;
-        loading = true; StatusLabel.Text = "正在读取记录…";
+        var version = ++generation; var selectedFilter = filter; var selectedPage = page; var selectedSection = section;
+        loading = true; StatusLabel.Text = "正在读取记录…"; PreviousButton.IsEnabled = NextButton.IsEnabled = false;
         try
         {
-            var result = await Task.Run(() => reader.Query(selectedFilter, selectedPage, PageSize));
-            if (version != generation) return;
-            total = result.Summary.Sessions;
-            if (page > 1 && (long)(page - 1) * PageSize >= total) { page = Math.Max(1, (int)Math.Ceiling(total / (double)PageSize)); await RefreshAsync(); return; }
-            SessionsGrid.ItemsSource = result.Rows;
-            SessionCount.Text = total.ToString(); UserCount.Text = result.Summary.Users.ToString();
-            UnfinishedCount.Text = result.Summary.Unfinished.ToString(); AbnormalCount.Text = result.Summary.Abnormal.ToString();
-            EmptyLabel.Visibility = result.Rows.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
-            EmptyLabel.Text = result.DatabaseExists ? "当前筛选下没有记录" : "尚未发现使用记录，请先部署并使用工作站";
-            ResultLabel.Text = $"共 {total} 条 · 每页 {PageSize} 条";
-            PageLabel.Text = $"{page} / {Math.Max(1, (int)Math.Ceiling(total / (double)PageSize))}";
-            PreviousButton.IsEnabled = page > 1; NextButton.IsEnabled = (long)page * PageSize < total;
-            StatusLabel.Text = $"更新于 {DateTime.Now:HH:mm:ss} · 录像保留 7 天，空间不足时可能提前清理。";
-            foreach (var tab in new[] { AllTab, RecordingTab, UnfinishedTab, AbnormalTab })
+            var result = await Task.Run(() =>
             {
-                var selected = (string)tab.Tag == view.ToString();
-                tab.Background = new SolidColorBrush(selected ? Color.FromRgb(145,184,193) : Colors.White);
-                tab.Foreground = new SolidColorBrush(selected ? Colors.White : Color.FromRgb(82,123,134));
+                var audit = selectedSection == Section.Events ? null : reader.Query(selectedFilter, selectedPage, PageSize);
+                var people = selectedSection == Section.People ? reader.People(selectedFilter, selectedPage, PageSize) : null;
+                var events = selectedSection == Section.Events ? reader.Events(null, selectedFilter) : null;
+                return (audit, people, events);
+            });
+            if (version != generation) return;
+            total = result.people?.Total ?? result.events?.Count ?? result.audit!.Summary.Sessions;
+            if (page > 1 && (long)(page-1)*PageSize >= total) { page = Math.Max(1,(int)Math.Ceiling(total/(double)PageSize)); await RefreshAsync(); return; }
+            SessionsGrid.ItemsSource = result.audit?.Rows; PeopleGrid.ItemsSource = result.people?.Rows; EventsGrid.ItemsSource = result.events;
+            if (result.audit is { } audit)
+            {
+                SessionCount.Text = audit.Summary.Sessions.ToString(); UserCount.Text = audit.Summary.Users.ToString();
+                UnfinishedCount.Text = audit.Summary.Unfinished.ToString(); AbnormalCount.Text = audit.Summary.Abnormal.ToString();
             }
+            EmptyLabel.Visibility = total == 0 ? Visibility.Visible : Visibility.Collapsed;
+            EmptyLabel.Text = "没有匹配的记录\n试试清除时间或人员条件";
+            ResultLabel.Text = (filter.At is { } at ? $"{at.LocalDateTime:yyyy-MM-dd HH:mm:ss} · " : "全部时间 · ") + $"共 {total} " + (section == Section.People ? "人" : "条");
+            PageLabel.Text = $"{page} / {Math.Max(1,(int)Math.Ceiling(total/(double)PageSize))}";
+            PreviousButton.IsEnabled = page > 1; NextButton.IsEnabled = (long)page*PageSize < total;
+            StatusLabel.Text = $"更新于 {DateTime.Now:HH:mm:ss} · 统计对应当前查询。未结束不代表在线；录像可能因保留期限或磁盘空间提前清理。";
+            UpdateNavigation();
         }
         catch (Exception error) when (error is not OutOfMemoryException)
         {
             if (version != generation) return;
-            SessionsGrid.ItemsSource = null; total = 0;
+            SessionsGrid.ItemsSource = PeopleGrid.ItemsSource = EventsGrid.ItemsSource = null; total = 0;
             SessionCount.Text = UserCount.Text = UnfinishedCount.Text = AbnormalCount.Text = "—";
-            PreviousButton.IsEnabled = NextButton.IsEnabled = false;
-            ResultLabel.Text = "记录读取失败";
-            EmptyLabel.Visibility = Visibility.Visible; EmptyLabel.Text = "无法读取记录";
-            StatusLabel.Text = "请检查数据库权限、格式或文件占用情况，修复后点击刷新。";
+            EmptyLabel.Visibility = Visibility.Visible; EmptyLabel.Text = "暂时无法读取记录\n请检查数据文件权限后刷新重试";
+            ResultLabel.Text = "读取失败"; StatusLabel.Text = "数据库可能被占用、损坏或无访问权限。";
         }
         finally { if (version == generation) loading = false; }
     }
     private async void SearchClicked(object sender, RoutedEventArgs e)
     {
-        try { filter = ReadFilter(); page = 1; await RefreshAsync(); }
-        catch (ArgumentException error) { StatusLabel.Text = error.Message; }
+        try { var nextFilter = ReadFilter(); ValidationLabel.Visibility = Visibility.Collapsed; filter = nextFilter; page = 1; await RefreshAsync(); }
+        catch (ArgumentException error) { ValidationLabel.Text = error.Message; ValidationLabel.Visibility = Visibility.Visible; FromTime.Focus(); }
     }
-    private void SearchKeyDown(object sender, KeyEventArgs e) { if (e.Key == Key.Enter) SearchClicked(sender, e); }
+    private void SearchKeyDown(object sender, KeyEventArgs e) { if (e.Key == Key.Enter) SearchClicked(sender,e); }
     private async void RefreshClicked(object sender, RoutedEventArgs e) => await RefreshAsync();
     private void ResetClicked(object sender, RoutedEventArgs e)
     {
-        SearchBox.Clear(); FromDate.SelectedDate = UntilDate.SelectedDate = null; FromTime.Text = "00:00:00"; UntilTime.Text = "23:59:59"; OverlapCheck.IsChecked = false;
-        view = SessionView.All; SearchClicked(sender, e);
+        filter = new(); view = SessionView.All; SyncInputs(); SearchClicked(sender,e);
     }
-    private void TabClicked(object sender, RoutedEventArgs e)
+    private async void TabClicked(object sender, RoutedEventArgs e)
     {
-        view = Enum.Parse<SessionView>((string)((Button)sender).Tag); SearchClicked(sender, e);
+        view = Enum.Parse<SessionView>((string)((Button)sender).Tag); filter = filter with { View = view }; page = 1; UpdateNavigation(); await RefreshAsync();
     }
-    private async void PreviousClicked(object sender, RoutedEventArgs e) { if (page > 1) { page--; await RefreshAsync(); } }
-    private async void NextClicked(object sender, RoutedEventArgs e) { if ((long)page * PageSize < total) { page++; await RefreshAsync(); } }
+    private async Task Navigate(Section target)
+    {
+        section = target; page = 1; view = SessionView.All;
+        filter = filter with { View = view, StudentId = null }; ValidationLabel.Visibility = Visibility.Collapsed;
+        SyncInputs(); UpdateNavigation(); await RefreshAsync();
+    }
+    private async void RecordsClicked(object sender, RoutedEventArgs e) => await Navigate(Section.Records);
+    private async void PeopleClicked(object sender, RoutedEventArgs e) => await Navigate(Section.People);
+    private async void SystemEventsClicked(object sender, RoutedEventArgs e) => await Navigate(Section.Events);
+    private async void ClearPersonClicked(object sender, RoutedEventArgs e) { filter = filter with { StudentId = null }; page = 1; await RefreshAsync(); }
+    private async Task PersonRecords(AuditPerson person, bool all)
+    {
+        filter = all ? new(StudentId: person.StudentId) : filter with { StudentId = person.StudentId, View = SessionView.All };
+        section = Section.Records; view = SessionView.All; page = 1; SyncInputs(); UpdateNavigation(); await RefreshAsync();
+    }
+    private async void PersonClicked(object sender, RoutedEventArgs e) { if (((FrameworkElement)sender).DataContext is AuditPerson p) await PersonRecords(p,false); }
+    private async void PersonAllClicked(object sender, RoutedEventArgs e) { if (((FrameworkElement)sender).DataContext is AuditPerson p) await PersonRecords(p,true); }
+    private async void PersonDoubleClicked(object sender, MouseButtonEventArgs e) { if (PeopleGrid.SelectedItem is AuditPerson p) await PersonRecords(p,false); }
+    private async void PreviousClicked(object sender, RoutedEventArgs e) { if (!loading && page > 1) { page--; await RefreshAsync(); } }
+    private async void NextClicked(object sender, RoutedEventArgs e) { if (!loading && (long)page*PageSize < total) { page++; await RefreshAsync(); } }
     private void DetailClicked(object sender, RoutedEventArgs e) { if (((FrameworkElement)sender).DataContext is AuditSession item) ShowDetail(item); }
     private void RowDoubleClicked(object sender, MouseButtonEventArgs e) { if (SessionsGrid.SelectedItem is AuditSession item) ShowDetail(item); }
-    private void ShowDetail(AuditSession item) => new SessionDetailWindow(reader, recordingDirectory, item, kioskMode) { Owner = this }.ShowDialog();
+    private void ShowDetail(AuditSession item) => new SessionDetailWindow(reader,recordingDirectory,item,kioskMode) { Owner = this }.ShowDialog();
     private void ExitClicked(object sender, RoutedEventArgs e) => Close();
-
-    private async void SystemEventsClicked(object sender, RoutedEventArgs e)
-    {
-        try
-        {
-            var events = await Task.Run(() => reader.Events(null, filter));
-            var table = new DataGrid { IsReadOnly = true, AutoGenerateColumns = false, ItemsSource = events, Margin = new Thickness(18), CanUserAddRows = false };
-            table.Columns.Add(new DataGridTextColumn { Header = "时间", Binding = new System.Windows.Data.Binding("TimeLabel"), Width = 175 });
-            table.Columns.Add(new DataGridTextColumn { Header = "事件", Binding = new System.Windows.Data.Binding("Description"), Width = 220 });
-            table.Columns.Add(new DataGridTextColumn { Header = "会话编号", Binding = new System.Windows.Data.Binding("SessionId"), Width = new DataGridLength(1, DataGridLengthUnitType.Star) });
-            new Window { Owner = this, Title = "系统事件 · 按当前日期范围 · 最近 500 条", Width = 850, Height = 560, WindowStartupLocation = WindowStartupLocation.CenterOwner, Content = table }.ShowDialog();
-        }
-        catch { StatusLabel.Text = "无法读取系统事件，请检查数据库。"; }
-    }
     private async void ExportClicked(object sender, RoutedEventArgs e)
     {
         if (exporting || loading) return;
