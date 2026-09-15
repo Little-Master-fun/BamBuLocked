@@ -6,18 +6,22 @@ public sealed class LocalAdministratorTests
     private static readonly LocalAdministratorCredential Credential = LocalAdministratorCredential.Create("MyAdmin", "test-only-password-123!");
     private sealed class Campus : IAuthenticator
     {
-        public int Calls;
+        public int Calls; public bool Unavailable;
         public Task<Identity> AuthenticateAsync(string account, string password, CancellationToken cancellationToken)
-        { Calls++; return Task.FromResult(new Identity("001", "Campus user")); }
+        {
+            Calls++;
+            if (Unavailable) throw new CampusServiceUnavailableException("unavailable");
+            return Task.FromResult(new Identity("001", "Campus user"));
+        }
     }
     private sealed class Cache : ICampusCredentialCache
     {
-        private readonly List<CachedCampusCredential> entries = [];
-        public CachedCampusCredential? Find(string account) => entries.FirstOrDefault(x => x.MatchesAccount(account));
-        public void Save(CachedCampusCredential credential)
+        public readonly List<CachedCampusIdentity> Entries = [];
+        public CachedCampusIdentity? Find(string account) => Entries.FirstOrDefault(x => x.MatchesAccount(account));
+        public void Save(CachedCampusIdentity credential)
         {
-            entries.RemoveAll(x => x.MatchesAccount(credential.Account));
-            entries.Add(credential);
+            Entries.RemoveAll(x => x.MatchesAccount(credential.Account));
+            Entries.Add(credential);
         }
     }
     [Fact]
@@ -44,21 +48,23 @@ public sealed class LocalAdministratorTests
         Assert.False(result.IsLocalAdministrator); Assert.Equal(1,campus.Calls);
     }
     [Fact]
-    public async Task CampusSuccessIsCachedAndNextLoginDoesNotCallCampus()
+    public async Task CampusSuccessIsCachedForServiceOutageWithoutPassword()
     {
         var campus = new Campus(); var cache = new Cache();
         var login = new LoginAuthenticator(campus, null, cache);
         var first = await login.AuthenticateAsync("001", "campus-password", false, default);
-        var second = await login.AuthenticateAsync("001", "campus-password", false, default);
-        Assert.Equal("Campus user", first.Identity.Name); Assert.Equal(first.Identity, second.Identity); Assert.Equal(1, campus.Calls);
+        campus.Unavailable = true;
+        var second = await login.AuthenticateAsync("001", "any-text", false, default);
+        Assert.Equal("Campus user", first.Identity.Name); Assert.Equal(first.Identity, second.Identity); Assert.Equal(2, campus.Calls);
+        Assert.DoesNotContain("campus-password", System.Text.Json.JsonSerializer.Serialize(cache.Entries));
     }
     [Fact]
-    public async Task CachedCampusAccountRejectsIncorrectPasswordWithoutCampus()
+    public async Task ServiceOutageWithoutCachedAccountIsDenied()
     {
         var campus = new Campus(); var cache = new Cache();
         var login = new LoginAuthenticator(campus, null, cache);
-        await login.AuthenticateAsync("001", "campus-password", false, default);
-        await Assert.ThrowsAsync<AuthenticationException>(() => login.AuthenticateAsync("001", "wrong-password", false, default));
+        campus.Unavailable = true;
+        await Assert.ThrowsAsync<CampusServiceUnavailableException>(() => login.AuthenticateAsync("001", "any", false, default));
         Assert.Equal(1, campus.Calls);
     }
     [Fact]

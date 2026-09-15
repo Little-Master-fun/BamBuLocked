@@ -31,12 +31,15 @@ public sealed class CasAuthenticator(HttpClient client, Uri baseUri, string serv
             var st = await PostTicket($"restlet/tickets/{Uri.EscapeDataString(tgt)}", target, "ST-", cancellationToken);
             var path = $"serviceValidate?ticket={Uri.EscapeDataString(st)}&service={Uri.EscapeDataString(service)}";
             using var response = await Send(HttpMethod.Get, path, null, cancellationToken);
-            if (!response.IsSuccessStatusCode) throw new AuthenticationException("认证校验失败，请稍后重试。");
+            if (!response.IsSuccessStatusCode)
+                throw (int)response.StatusCode >= (int)HttpStatusCode.InternalServerError
+                    ? new CampusServiceUnavailableException("认证服务暂时不可用。")
+                    : new AuthenticationException("认证校验失败，请稍后重试。");
             return ParseIdentity(await response.Content.ReadAsStringAsync(cancellationToken));
         }
-        catch (HttpRequestException) { throw new AuthenticationException("无法连接认证服务器，请检查网络。"); }
+        catch (HttpRequestException) { throw new CampusServiceUnavailableException("无法连接认证服务器，请检查网络。"); }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
-        { throw new AuthenticationException("认证请求超时，请重试。"); }
+        { throw new CampusServiceUnavailableException("认证请求超时，请重试。"); }
         finally
         {
             // Do not retain a reusable campus login ticket after extracting identity.
@@ -58,7 +61,7 @@ public sealed class CasAuthenticator(HttpClient client, Uri baseUri, string serv
         using var response = await Send(HttpMethod.Post, path, body, ct);
         if (response.StatusCode is HttpStatusCode.BadRequest or HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
             throw new AuthenticationException("认证未通过，请检查账号密码或联系管理员。");
-        if (!response.IsSuccessStatusCode) throw new AuthenticationException("认证服务暂时不可用。");
+        if (!response.IsSuccessStatusCode) throw new CampusServiceUnavailableException("认证服务暂时不可用。");
         var ticket = (await response.Content.ReadAsStringAsync(ct)).Trim();
         if (!ticket.StartsWith(prefix, StringComparison.Ordinal) || ticket.Length > 4096 || ticket.Any(char.IsWhiteSpace))
             throw new AuthenticationException("认证服务返回了不支持的票据格式。");
